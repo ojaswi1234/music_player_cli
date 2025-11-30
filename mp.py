@@ -10,6 +10,7 @@ from rich.progress import track, Progress
 from getmusic import get_music
 import json
 
+
 __version__ = "1.0.0"
 
 console = Console()
@@ -79,6 +80,18 @@ def search(query: str):
         console.print(table, justify="center", style="bold green", highlight=False)
     else:
         console.print("No results found.", style="bold red")
+        
+        
+        
+@app.command(short_help="play")
+def play(query: str):
+    # Start the spinner and status message
+    with console.status(f"[bold green]Searching for '{query}' and preparing to play...[/bold green]"):
+        # This is where your blocking task would go (e.g., fetching music)
+        time.sleep(5)  # Simulate 5 seconds of work
+
+    # The status message disappears automatically when the 'with' block is exited
+    console.print(f"[bold blue]Playback initiated for: {query}[/bold blue]")
 
 @app.command()
 def show_history():
