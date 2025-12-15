@@ -3,3 +3,5 @@ typer
 ytmusicapi
 yt-dlp 
 python-vlc
+setuptools
+wheel

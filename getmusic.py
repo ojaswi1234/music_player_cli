@@ -4,11 +4,15 @@ import os
 id = None
 
 def get_music(query):
-    if not os.path.exists("headers_auth.json"):
-        print("Please provide headers_auth.json file from your browser's YouTube Music session.")
+    # Get the directory where this script is located
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    auth_path = os.path.join(base_dir, "headers_auth.json")
+
+    if not os.path.exists(auth_path):
+        print(f"Please provide headers_auth.json file at {auth_path}")
         return []
 
-    ytmusic = YTMusic('headers_auth.json')
+    ytmusic = YTMusic(auth_path)
     search_results = ytmusic.search(query, filter='songs')
     songs = []
     for result in search_results:

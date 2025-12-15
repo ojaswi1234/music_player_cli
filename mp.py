@@ -4,102 +4,85 @@ import platform
 import subprocess
 import time
 import sys
-import ctypes
+import shutil
 import typer
 import requests
 import yt_dlp
+import zipfile
+import io
 from rich.console import Console
 from rich.table import Table
 from rich.progress import track, Progress
 from getmusic import get_music
 import json
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 console = Console()
 app = typer.Typer()
 
-# --- AUTOMATIC VLC INSTALLATION LOGIC ---
-def install_vlc():
-    """
-    Attempts to install VLC Media Player matching the Python architecture.
-    Returns True if installation commands ran successfully, False otherwise.
-    """
-    console.print("\n[bold red]VLC Media Player not found![/bold red]")
-    console.print("VLC is required to stream audio. Attempting automatic installation...\n")
-
-    # 1. Try installing via Winget (cleanest method on Windows 10/11)
-    try:
-        console.print("[yellow]Method 1: Trying Windows Package Manager (Winget)...[/yellow]")
-        # --silent argument attempts to install without nagging prompts
-        subprocess.run(["winget", "install", "-e", "--id", "VideoLAN.VLC", "--silent"], check=True)
-        console.print("[bold green]VLC installed successfully via Winget![/bold green]")
-        return True
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        console.print("[red]Winget failed or not available.[/red]")
-
-    # 2. Fallback: Direct Download
-    console.print("[yellow]Method 2: Downloading installer directly...[/yellow]")
-    
-    # Check architecture (Match VLC bits to Python bits)
-    is_64bits = sys.maxsize > 2**32
-    vlc_ver = "3.0.21"
-    base_url = "https://get.videolan.org/vlc"
-    
-    if is_64bits:
-        url = f"{base_url}/{vlc_ver}/win64/vlc-{vlc_ver}-win64.exe"
-    else:
-        url = f"{base_url}/{vlc_ver}/win32/vlc-{vlc_ver}-win32.exe"
-    
-    installer_name = "vlc_installer.exe"
-    
-    try:
-        with console.status(f"[bold green]Downloading VLC ({vlc_ver})...[/bold green]"):
-            response = requests.get(url, stream=True)
-            with open(installer_name, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        
-        console.print("[bold green]Download complete. Launching installer...[/bold green]")
-        console.print("[bold yellow]Please follow the installation prompts (Click 'Next' -> 'Install').[/bold yellow]")
-        
-        # Run the installer and wait for it to finish
-        subprocess.run([installer_name], check=True)
-        
-        # Cleanup
-        if os.path.exists(installer_name):
-            os.remove(installer_name)
-            
-        return True
-    except Exception as e:
-        console.print(f"[bold red]Installation failed:[/bold red] {e}")
-        return False
-
-# --- SAFE IMPORT (RUNS ONCE AT STARTUP) ---
-# This block ensures VLC is available before the app even starts.
-try:
-    # Try to import VLC. If installed, this works.
-    import vlc
-    # Check if the DLL actually loads (sometimes import succeeds but DLL is missing)
-    instance = vlc.Instance()
-    instance.release()
-except (OSError, FileNotFoundError, AttributeError, NameError, ImportError):
-    # If ANY error occurs during import/loading, try to install
-    success = install_vlc()
-    if success:
-        print("\n**************************************************")
-        print("VLC Installed Successfully!")
-        print("Please RESTART this script to apply changes.")
-        print("**************************************************\n")
-        sys.exit(0)
-    else:
-        print("Could not install VLC automatically.")
-        print("Please install it manually from: https://www.videolan.org/vlc/")
-        sys.exit(1)
-
-# ----------------------------------------
-
 HISTORY_FILE = "play_history.txt"
+
+def get_player():
+    """
+    Returns the command list for the best available audio player.
+    Windows: Auto-downloads ffplay.exe if missing.
+    Linux/Mac: Checks for installed ffplay or mpv.
+    """
+    system = platform.system()
+
+    # 1. Check for installed players (Linux/Mac/Windows with PATH)
+    if shutil.which("ffplay"):
+        return ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]
+    
+    if shutil.which("mpv"):
+        return ["mpv", "--no-video"]
+
+    # 2. Windows-Specific: Look for local portable ffplay.exe
+    if system == "Windows":
+        local_exe = os.path.abspath("ffplay.exe")
+        if os.path.exists(local_exe):
+            return [local_exe, "-nodisp", "-autoexit", "-loglevel", "quiet"]
+        
+        # Auto-download if missing on Windows
+        return download_ffplay_windows()
+
+    # 3. Linux/Mac Missing Player Error
+    console.print(f"\n[bold red]Error: No compatible audio player found on {system}.[/bold red]")
+    if system == "Linux":
+        console.print("Please install FFmpeg:\n  [green]sudo apt install ffmpeg[/green]  (Ubuntu/Debian)\n  [green]sudo pacman -S ffmpeg[/green]    (Arch)")
+    elif system == "Darwin": # macOS
+        console.print("Please install FFmpeg:\n  [green]brew install ffmpeg[/green]")
+    
+    sys.exit(1)
+
+def download_ffplay_windows():
+    """Downloads ffplay.exe for Windows users."""
+    console.print("\n[bold yellow]System audio components missing.[/bold yellow]")
+    console.print("Downloading [bold]FFplay[/bold] (Portable Audio Engine)...")
+    
+    url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+    
+    try:
+        with console.status("[bold green]Downloading (approx. 30MB)...[/bold green]"):
+            r = requests.get(url)
+            r.raise_for_status()
+            
+        with console.status("[bold green]Extracting ffplay.exe...[/bold green]"):
+            with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+                # Find ffplay.exe inside the zip
+                for file in z.namelist():
+                    if file.endswith("bin/ffplay.exe"):
+                        with open("ffplay.exe", "wb") as f:
+                            f.write(z.read(file))
+                        break
+        
+        console.print("[bold green]Audio engine ready![/bold green]")
+        return [os.path.abspath("ffplay.exe"), "-nodisp", "-autoexit", "-loglevel", "quiet"]
+
+    except Exception as e:
+        console.print(f"[bold red]Download failed:[/bold red] {e}")
+        sys.exit(1)
 
 def log_history(name, video_id):
     with open(HISTORY_FILE, "a") as f:
@@ -112,13 +95,8 @@ def help():
     table.add_column("Description", style="dim", width=50)
     table.add_row("search", "search for a song")
     table.add_row("play", "Play a song")
-    table.add_row("pause", "Pause the current song")
-    table.add_row("stop", "Stop the current song")
-    table.add_row("next", "Play the next song")
-    table.add_row("previous", "Play the previous song")
     table.add_row("show-history", "Show the play history")
     table.add_row("clear-history", "Clear the play history")
-    table.add_row("repeat", "Turn On/Off repeat mode")
 
     console.print("""[bold green ]
       mmmm   mmmmmm    mmmm   mm#mm
@@ -127,25 +105,15 @@ def help():
         "#   #       #    "     #   
     "mmm#"   #        "mmmm   mm#mm
     [/bold green ]""", justify="center", style="bold green", highlight=False)
-    console.print(
-    "\n"+
-    f"[bold green size=24]Version: {__version__}[/bold green size=24]"+
-    "\n"+
-        "[blue]A Simple Music Player CLI Application[/blue]"
-    ,justify="center", style="bold green", highlight=False
-    )
+    console.print("\n[blue]Cross-Platform CLI Music Player[/blue]", justify="center")
     console.print("\n")
     console.print(table, justify="center", style="bold green", highlight=False)
 
 @app.command(short_help="search")
 def search(query: str):
-    global last_search_results
     console.print(f"Searching for: [bold green]{query}[/bold green] ...........", style="bold green", justify="center")
-    console.print("\n")
-    console.print("Here are some results! 🎵", style="bold green", justify="center")
-    console.print("\n")
     for i in track(range(4), description="Processing..."):
-        time.sleep(1)
+        time.sleep(0.5)
 
     results = get_music(query)
    
@@ -165,9 +133,9 @@ def search(query: str):
 @app.command(short_help="play")
 def play(query: str):
     """
-    Search for a song and stream it immediately without downloading.
+    Search for a song and stream it immediately.
     """
-    # 1. Search for the song using your existing get_music function
+    # 1. Search
     with console.status(f"[bold green]Searching for '{query}'...[/bold green]"):
         results = get_music(query)
 
@@ -175,24 +143,20 @@ def play(query: str):
         console.print("[bold red]No music found.[/bold red]")
         return
 
-    # Automatically pick the first result
     song = results[0]
     title = song['title']
     video_id = song['videoId']
     artist = song['artists']
 
-    # Log to history
     log_history(title, video_id)
-
     console.print(f"[bold blue]Found:[/bold blue] {title} by {artist}")
 
-    # 2. Extract the stream URL using yt-dlp
+    # 2. Get Player Command (Handles Win/Linux/Mac)
+    player_cmd = get_player()
+
+    # 3. Extract Stream
     stream_url = None
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'quiet': True,
-        'noplaylist': True,
-    }
+    ydl_opts = {'format': 'bestaudio/best', 'quiet': True, 'noplaylist': True}
 
     with console.status("[bold green]Extracting audio stream...[/bold green]"):
         try:
@@ -207,32 +171,18 @@ def play(query: str):
         console.print("[bold red]Could not retrieve audio stream.[/bold red]")
         return
 
-    # 3. Play using VLC
+    # 4. Play
     console.print(f"[bold green]Now Playing:[/bold green] {title} 🎵")
     console.print("[dim]Press Ctrl+C to stop playback.[/dim]")
     
-    # REMOVED: install_vlc() - This was redundant and caused re-installation loops.
-    
-    # Initialize VLC
-    instance = vlc.Instance()
-    player = instance.media_player_new()
-    media = instance.media_new(stream_url)
-    player.set_media(media)
-    
-    player.play()
-
-    # Keep the script running while playing
     try:
-        while True:
-            state = player.get_state()
-            # Stop if the song has ended
-            if state == vlc.State.Ended:
-                break
-            # Small sleep to prevent high CPU usage
-            time.sleep(0.5)
+        # Append URL to the player command
+        full_cmd = player_cmd + [stream_url]
+        subprocess.run(full_cmd, check=True)
     except KeyboardInterrupt:
-        player.stop()
         console.print("\n[bold yellow]Playback stopped.[/bold yellow]")
+    except Exception as e:
+        console.print(f"[bold red]Player Error:[/bold red] {e}")
 
 @app.command()
 def show_history():
