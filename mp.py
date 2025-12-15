@@ -16,7 +16,7 @@ from rich.progress import track, Progress
 from getmusic import get_music
 import json
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 console = Console()
 app = typer.Typer()
@@ -31,9 +31,14 @@ def get_player():
     """
     system = platform.system()
 
+    # Recommended flags for streaming stability
+    # -infbuf: Don't limit the input buffer (prevents stopping if download is slow)
+    # -reconnect 1: Try to reconnect if the stream drops
+    ffplay_flags = ["-nodisp", "-autoexit", "-loglevel", "quiet", "-infbuf"] 
+
     # 1. Check for installed players (Linux/Mac/Windows with PATH)
     if shutil.which("ffplay"):
-        return ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]
+        return ["ffplay"] + ffplay_flags
     
     if shutil.which("mpv"):
         return ["mpv", "--no-video"]
@@ -42,10 +47,10 @@ def get_player():
     if system == "Windows":
         local_exe = os.path.abspath("ffplay.exe")
         if os.path.exists(local_exe):
-            return [local_exe, "-nodisp", "-autoexit", "-loglevel", "quiet"]
+            return [local_exe] + ffplay_flags
         
         # Auto-download if missing on Windows
-        return download_ffplay_windows()
+        return download_ffplay_windows(ffplay_flags)
 
     # 3. Linux/Mac Missing Player Error
     console.print(f"\n[bold red]Error: No compatible audio player found on {system}.[/bold red]")
@@ -56,7 +61,7 @@ def get_player():
     
     sys.exit(1)
 
-def download_ffplay_windows():
+def download_ffplay_windows(flags):
     """Downloads ffplay.exe for Windows users."""
     console.print("\n[bold yellow]System audio components missing.[/bold yellow]")
     console.print("Downloading [bold]FFplay[/bold] (Portable Audio Engine)...")
@@ -78,7 +83,7 @@ def download_ffplay_windows():
                         break
         
         console.print("[bold green]Audio engine ready![/bold green]")
-        return [os.path.abspath("ffplay.exe"), "-nodisp", "-autoexit", "-loglevel", "quiet"]
+        return [os.path.abspath("ffplay.exe")] + flags
 
     except Exception as e:
         console.print(f"[bold red]Download failed:[/bold red] {e}")

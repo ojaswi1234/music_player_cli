@@ -14,7 +14,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'musicplayer=mp:app',
+            'spci=mp:app',
         ],
     },
 )
