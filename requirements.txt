@@ -1,3 +1,5 @@
 rich
 typer
 ytmusicapi
+yt-dlp 
+python-vlc

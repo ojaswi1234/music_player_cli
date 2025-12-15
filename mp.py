@@ -3,22 +3,103 @@ import os
 import platform
 import subprocess
 import time
+import sys
+import ctypes
 import typer
+import requests
+import yt_dlp
 from rich.console import Console
 from rich.table import Table
 from rich.progress import track, Progress
 from getmusic import get_music
 import json
 
-
 __version__ = "1.0.0"
 
 console = Console()
 app = typer.Typer()
 
+# --- AUTOMATIC VLC INSTALLATION LOGIC ---
+def install_vlc():
+    """
+    Attempts to install VLC Media Player matching the Python architecture.
+    Returns True if installation commands ran successfully, False otherwise.
+    """
+    console.print("\n[bold red]VLC Media Player not found![/bold red]")
+    console.print("VLC is required to stream audio. Attempting automatic installation...\n")
+
+    # 1. Try installing via Winget (cleanest method on Windows 10/11)
+    try:
+        console.print("[yellow]Method 1: Trying Windows Package Manager (Winget)...[/yellow]")
+        # --silent argument attempts to install without nagging prompts
+        subprocess.run(["winget", "install", "-e", "--id", "VideoLAN.VLC", "--silent"], check=True)
+        console.print("[bold green]VLC installed successfully via Winget![/bold green]")
+        return True
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        console.print("[red]Winget failed or not available.[/red]")
+
+    # 2. Fallback: Direct Download
+    console.print("[yellow]Method 2: Downloading installer directly...[/yellow]")
+    
+    # Check architecture (Match VLC bits to Python bits)
+    is_64bits = sys.maxsize > 2**32
+    vlc_ver = "3.0.21"
+    base_url = "https://get.videolan.org/vlc"
+    
+    if is_64bits:
+        url = f"{base_url}/{vlc_ver}/win64/vlc-{vlc_ver}-win64.exe"
+    else:
+        url = f"{base_url}/{vlc_ver}/win32/vlc-{vlc_ver}-win32.exe"
+    
+    installer_name = "vlc_installer.exe"
+    
+    try:
+        with console.status(f"[bold green]Downloading VLC ({vlc_ver})...[/bold green]"):
+            response = requests.get(url, stream=True)
+            with open(installer_name, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        
+        console.print("[bold green]Download complete. Launching installer...[/bold green]")
+        console.print("[bold yellow]Please follow the installation prompts (Click 'Next' -> 'Install').[/bold yellow]")
+        
+        # Run the installer and wait for it to finish
+        subprocess.run([installer_name], check=True)
+        
+        # Cleanup
+        if os.path.exists(installer_name):
+            os.remove(installer_name)
+            
+        return True
+    except Exception as e:
+        console.print(f"[bold red]Installation failed:[/bold red] {e}")
+        return False
+
+# --- SAFE IMPORT (RUNS ONCE AT STARTUP) ---
+# This block ensures VLC is available before the app even starts.
+try:
+    # Try to import VLC. If installed, this works.
+    import vlc
+    # Check if the DLL actually loads (sometimes import succeeds but DLL is missing)
+    instance = vlc.Instance()
+    instance.release()
+except (OSError, FileNotFoundError, AttributeError, NameError, ImportError):
+    # If ANY error occurs during import/loading, try to install
+    success = install_vlc()
+    if success:
+        print("\n**************************************************")
+        print("VLC Installed Successfully!")
+        print("Please RESTART this script to apply changes.")
+        print("**************************************************\n")
+        sys.exit(0)
+    else:
+        print("Could not install VLC automatically.")
+        print("Please install it manually from: https://www.videolan.org/vlc/")
+        sys.exit(1)
+
+# ----------------------------------------
 
 HISTORY_FILE = "play_history.txt"
-
 
 def log_history(name, video_id):
     with open(HISTORY_FILE, "a") as f:
@@ -80,18 +161,78 @@ def search(query: str):
         console.print(table, justify="center", style="bold green", highlight=False)
     else:
         console.print("No results found.", style="bold red")
-        
-        
-        
+
 @app.command(short_help="play")
 def play(query: str):
-    # Start the spinner and status message
-    with console.status(f"[bold green]Searching for '{query}' and preparing to play...[/bold green]"):
-        # This is where your blocking task would go (e.g., fetching music)
-        time.sleep(5)  # Simulate 5 seconds of work
+    """
+    Search for a song and stream it immediately without downloading.
+    """
+    # 1. Search for the song using your existing get_music function
+    with console.status(f"[bold green]Searching for '{query}'...[/bold green]"):
+        results = get_music(query)
 
-    # The status message disappears automatically when the 'with' block is exited
-    console.print(f"[bold blue]Playback initiated for: {query}[/bold blue]")
+    if not results:
+        console.print("[bold red]No music found.[/bold red]")
+        return
+
+    # Automatically pick the first result
+    song = results[0]
+    title = song['title']
+    video_id = song['videoId']
+    artist = song['artists']
+
+    # Log to history
+    log_history(title, video_id)
+
+    console.print(f"[bold blue]Found:[/bold blue] {title} by {artist}")
+
+    # 2. Extract the stream URL using yt-dlp
+    stream_url = None
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+        'noplaylist': True,
+    }
+
+    with console.status("[bold green]Extracting audio stream...[/bold green]"):
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+                stream_url = info.get('url')
+        except Exception as e:
+            console.print(f"[bold red]Error extracting stream:[/bold red] {e}")
+            return
+
+    if not stream_url:
+        console.print("[bold red]Could not retrieve audio stream.[/bold red]")
+        return
+
+    # 3. Play using VLC
+    console.print(f"[bold green]Now Playing:[/bold green] {title} 🎵")
+    console.print("[dim]Press Ctrl+C to stop playback.[/dim]")
+    
+    # REMOVED: install_vlc() - This was redundant and caused re-installation loops.
+    
+    # Initialize VLC
+    instance = vlc.Instance()
+    player = instance.media_player_new()
+    media = instance.media_new(stream_url)
+    player.set_media(media)
+    
+    player.play()
+
+    # Keep the script running while playing
+    try:
+        while True:
+            state = player.get_state()
+            # Stop if the song has ended
+            if state == vlc.State.Ended:
+                break
+            # Small sleep to prevent high CPU usage
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        player.stop()
+        console.print("\n[bold yellow]Playback stopped.[/bold yellow]")
 
 @app.command()
 def show_history():
