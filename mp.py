@@ -161,15 +161,27 @@ def help():
     table.add_row("clear-history", "Clear the play history")
 
     console.print(
-        Panel(
-            Align.center(
-                "[bold green]SPCI MUSIC PLAYER[/bold green]\n"
-                "[dim]A simple, elegant CLI music player[/dim]"
-            ),
-            box=box.DOUBLE,
-            style="green"
-        )
-    )
+    Panel(
+        Align.center(
+            """[bold green]
+ ░██████╗██████╗░░█████╗░██╗
+ ██╔════╝██╔══██╗██╔══██╗██║
+ ╚█████╗░██████╔╝██║░░╚═╝██║
+ ░╚═══██╗██╔═══╝░██║░░██╗██║
+ ██████╔╝██║░░░░░╚█████╔╝██║
+ ╚═════╝░╚═╝░░░░░░╚════╝░╚═╝
+[/bold green]
+[dim]Sonic Pulse Command Interface[/dim]
+[dim]A simple yet elegant CLI music player[/dim]
+""",
+            vertical="middle"
+        ),
+        box=box.DOUBLE,
+        style="green",
+        subtitle="Welcome"
+    ),
+    Align.right("""developed by [bold blue][link=https://github.com/ojaswi1234]@ojaswi1234[/link][/bold blue]""")
+)
     console.print(table, justify="center")
 
 @app.command(short_help="search")
