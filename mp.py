@@ -47,7 +47,7 @@ def make_layout() -> Layout:
 
 def get_header():
     return Panel(
-        Align.center(f"[bold cyan]SPCI MUSIC PLAYER[/bold cyan] v{__version__} | [dim]Python CLI Audio Streamer[/dim]"),
+        Align.center(f"[bold cyan]SPCI MUSIC PLAYER[/bold cyan] v{__version__} | developed by [bold blue][link=https://github.com/ojaswi1234]@ojaswi1234[/link][/bold blue]"),
         box=box.ROUNDED,
         style="white on black"
     )
