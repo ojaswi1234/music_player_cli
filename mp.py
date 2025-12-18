@@ -255,15 +255,16 @@ def play(query: str):
 
     # 4. Play with Live UI
     try:
-        # Start the player process
-        process = subprocess.Popen(full_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
         # Live Loop: Updates the visualizer while the song plays
         with Live(layout, refresh_per_second=4, screen=True) as live:
-            while process.poll() is None: # While process is running
-                # Update visualizer animation
-                layout["left"].update(get_now_playing_panel(title, artist, None))
-                time.sleep(0.25)
+            for i in range(10):
+                # Start the player process
+                process = subprocess.Popen(full_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                while process.poll() is None: # While process is running
+                    # Update visualizer animation
+                    layout["left"].update(get_now_playing_panel(title, artist, None))
+                    time.sleep(0.25)
         
         console.print("[bold yellow]Playback finished.[/bold yellow]")
 

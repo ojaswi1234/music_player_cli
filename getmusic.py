@@ -9,7 +9,19 @@ def get_music(query):
     auth_path = os.path.join(base_dir, "headers_auth.json")
 
     if not os.path.exists(auth_path):
-        print(f"Please provide headers_auth.json file at {auth_path}")
+        print(f"\n[!] Authentication file missing: {auth_path}")
+        print("-" * 60)
+        print("To generate 'headers_auth.json':")
+        print("1. Open https://music.youtube.com in your browser (ensure you are logged in).")
+        print("2. Open Developer Tools (F12), go to the 'Network' tab.")
+        print("3. Search for any song to trigger network requests.")
+        print("4. Find a request like 'search' or 'browse' (filter by 'XHR' or 'Fetch').")
+        print("5. Right-click the request > Copy > Copy Request Headers.")
+        print("6. Run the following command in your terminal:")
+        print("   ytmusicapi browser")
+        print("7. Paste the copied headers when prompted.")
+        print(f"8. This will generate 'browser.json'. Rename it to 'headers_auth.json' and move it to: {base_dir}")
+        print("-" * 60)
         return []
 
     ytmusic = YTMusic(auth_path)
