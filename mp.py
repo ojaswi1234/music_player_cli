@@ -217,7 +217,7 @@ def play(query: str):
         results = get_music(query)
 
     if not results:
-        console.print("[bold red]No music found.[/bold red]")
+        console.print("[bold red]No music found.. (try searching with different keywords)[/bold red]")
         return
 
     song = results[0]
