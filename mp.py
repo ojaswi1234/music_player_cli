@@ -144,12 +144,28 @@ def download_ffplay_windows(flags):
         # Ensure the global bin directory exists
         os.makedirs(BIN_DIR, exist_ok=True)
 
-        with console.status("[bold green]Downloading (approx. 30MB)...[/bold green]"):
-            r = requests.get(url)
-            r.raise_for_status()
-            
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        total_size = int(response.headers.get('content-length', 0))
+        
+        buffer = io.BytesIO()
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            console=console
+        ) as progress:
+            task = progress.add_task("[green]Downloading...", total=total_size)
+            for chunk in response.iter_content(chunk_size=8192):
+                buffer.write(chunk)
+                progress.update(task, advance=len(chunk))
+        
+        buffer.seek(0) # Reset pointer to start of file for reading
+
         with console.status("[bold green]Extracting ffplay.exe...[/bold green]"):
-            with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+            with zipfile.ZipFile(buffer) as z:
                 for file in z.namelist():
                     if file.endswith("bin/ffplay.exe"):
                         with open(FFPLAY_PATH, "wb") as f:
