@@ -29,6 +29,11 @@ app = typer.Typer()
 
 HISTORY_FILE = "play_history.txt"
 
+# Global configuration for binary storage
+APP_DIR = os.path.join(os.path.expanduser("~"), ".spci")
+BIN_DIR = os.path.join(APP_DIR, "bin")
+FFPLAY_PATH = os.path.join(BIN_DIR, "ffplay.exe")
+
 # --- UI COMPONENTS ---
 
 def make_layout() -> Layout:
@@ -111,10 +116,19 @@ def get_player():
         return ["mpv", "--no-video"]
 
     if system == "Windows":
+        # Check global location first
+        if os.path.exists(FFPLAY_PATH):
+            return [FFPLAY_PATH] + ffplay_flags
+
         local_exe = os.path.abspath("ffplay.exe")
         if os.path.exists(local_exe):
             return [local_exe] + ffplay_flags
         return download_ffplay_windows(ffplay_flags)
+    elif system in ["Linux","MacOS" ]:
+        subprocess.run(["apt-get", "install", "mpv"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if shutil.which("mpv"):
+            return ["mpv", "--no-video"]
+        
 
     console.print(f"\n[bold red]Error: No compatible audio player found on {system}.[/bold red]")
     sys.exit(1)
@@ -122,11 +136,14 @@ def get_player():
 def download_ffplay_windows(flags):
     """Downloads ffplay.exe for Windows users."""
     console.print("\n[bold yellow]System audio components missing.[/bold yellow]")
-    console.print("Downloading [bold]FFplay[/bold] (Portable Audio Engine)...")
+    console.print(f"Downloading [bold]FFplay[/bold] to {FFPLAY_PATH}...")
     
     url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
     
     try:
+        # Ensure the global bin directory exists
+        os.makedirs(BIN_DIR, exist_ok=True)
+
         with console.status("[bold green]Downloading (approx. 30MB)...[/bold green]"):
             r = requests.get(url)
             r.raise_for_status()
@@ -135,12 +152,12 @@ def download_ffplay_windows(flags):
             with zipfile.ZipFile(io.BytesIO(r.content)) as z:
                 for file in z.namelist():
                     if file.endswith("bin/ffplay.exe"):
-                        with open("ffplay.exe", "wb") as f:
+                        with open(FFPLAY_PATH, "wb") as f:
                             f.write(z.read(file))
                         break
         
         console.print("[bold green]Audio engine ready![/bold green]")
-        return [os.path.abspath("ffplay.exe")] + flags
+        return [FFPLAY_PATH] + flags
 
     except Exception as e:
         console.print(f"[bold red]Download failed:[/bold red] {e}")
@@ -149,6 +166,12 @@ def download_ffplay_windows(flags):
 def log_history(name, video_id):
     with open(HISTORY_FILE, "a") as f:
         f.write(f"{name} | https://www.youtube.com/watch?v={video_id}\n")
+        
+
+@app.command(short_help="steps to convert spci to global instead of local")
+def setup_help():
+   console.print("[bold green]For making SPCI a global command, please use [    pip install -e .   ] command inside its folder.[/bold green]")
+        
 
 @app.command(short_help="show help")
 def help():
@@ -159,6 +182,7 @@ def help():
     table.add_row("play", "Play a song")
     table.add_row("show-history", "Show the play history")
     table.add_row("clear-history", "Clear the play history")
+    table.add_row("setup-help", "Steps to setup the environment to global")
 
     console.print(
     Panel(

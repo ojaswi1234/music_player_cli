@@ -54,3 +54,8 @@ if __name__ == "__main__":
             print(f"{i}. {song['title']} by {song['artists']} [{song['album']}] - {song['duration']}")
     else:
         print("No results found.")
+        
+        
+        
+        
+        
