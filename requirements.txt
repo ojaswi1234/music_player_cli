@@ -6,3 +6,4 @@ python-vlc
 setuptools
 wheel
 tinydb
+rookiepy
