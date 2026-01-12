@@ -18,6 +18,9 @@ from rich.panel import Panel
 from rich.live import Live
 from rich.align import Align
 from rich import box
+import math
+import random
+from rich.panel import Panel
 
 # External project modules
 from getmusic import get_music
@@ -73,26 +76,77 @@ def get_header():
         style="white on black"
     )
 
-def get_now_playing_panel(title, artist, is_offline=False):
-    """The central dashboard showing what's currently active."""
-    # Simple randomized visualizer
-    vis_string = ""
-    for _ in range(40):
-        height = random.choice([" ", "▂", "▃", "▄", "▅", "▆", "▇", "█"])
-        vis_string += f"[bold magenta]{height}[/bold magenta]"
-    
-    source_tag = "[bold green]● OFFLINE (LOCAL)[/bold green]" if is_offline else "[bold blue]● STREAMING (YOUTUBE)[/bold blue]"
-    
+
+def get_now_playing_panel(title, artist, is_offline=False, t=0.0):
+    """
+    Elegant ribbon visualizer:
+    - Adapts to terminal size (console.size)
+    - Smooth sine backbone + per-column micro-noise
+    - Soft falloff with graded glyphs and color shift
+    """
+    # Terminal-aware sizing (keeps left panel compact)
+    term = console.size
+    viz_width = max(24, min(48, term.width // 3))
+    viz_height = max(8, min(16, term.height // 4))
+
+    cx = viz_width // 2
+    cy = viz_height // 2
+
+    # Glyph ramp from faint -> bold
+    glyphs = [" ", "·", "•", "●", "█"]
+    colors = ["dim", "cyan", "magenta", "green", "yellow"]
+
+    # Parameters that control elegance
+    base_freq = 0.9 + (viz_width / 80)        # spatial frequency
+    speed = 1                             # temporal speed
+    amplitude = (viz_height / 2.5)           # vertical swing
+    smoothness = 1.6                         # how soft the falloff is
+
+    # Build grid rows (top->bottom)
+    grid_rows = []
+    for y in range(viz_height):
+        row = []
+        for x in range(viz_width):
+            # backbone: smooth sine across x, offset by time and small noise
+            backbone = math.sin((x / viz_width) * base_freq * 2 * math.pi + t * speed)
+            micro = math.sin((x * 0.7 + y * 0.4) * 0.4 + t * 1.7) * 0.15
+            y_center = cy + (backbone + micro) * amplitude
+
+            # distance from ribbon centerline for this column
+            dist = abs(y - y_center)
+
+            # normalized intensity (1 at center, decays to 0)
+            intensity = max(0.0, 1.0 - (dist / smoothness))
+            idx = int(intensity * (len(glyphs) - 1))
+
+            # subtle phase-based color shift across x
+            color_shift = int(((math.sin(t * 0.6 + x * 0.12) + 1) / 2) * (len(colors) - 1))
+            color_idx = min(len(colors) - 1, max(0, idx + color_shift - 1))
+
+            ch = glyphs[idx]
+            color = colors[color_idx]
+            # keep markup lean
+            row.append(f"[{color}]{ch}[/{color}]")
+        grid_rows.append("".join(row))
+
+    vis = "\n".join(grid_rows)
+
+    source_tag = (
+        "[bold green]● OFFLINE (LOCAL)[/bold green]" if is_offline
+        else "[bold blue]● STREAMING (YOUTUBE)[/bold blue]"
+    )
+
     content = f"""
 [bold white]TITLE :[/bold white] [yellow]{title}[/yellow]
 [bold white]ARTIST:[/bold white] [cyan]{artist}[/cyan]
 [bold white]STATUS:[/bold white] {source_tag}
 
-[bold white]AUDIO PULSE:[/bold white]
-{vis_string}
-{vis_string}
-    """
-    return Panel(content, title="[bold red]NOW PLAYING[/bold red]", border_style="red")
+{vis}
+    """.rstrip()
+
+    return Panel(Align.center(content), title="[bold red]NOW PLAYING[/bold red]", border_style="red")
+
+
 
 def get_controls_panel():
     return Panel(
@@ -237,18 +291,13 @@ def show_fav():
     
     console.print(table, justify="center")
     
-    
-@app.command(short_help="Authenticate User (In Development)")
-def login():
-    console.print("[bold yellow]Login feature is under development. Stay tuned![/bold yellow]")
-    
+  
     
 @app.command(short_help="show help")
 def help():
     table = Table(show_header=True, header_style="bold blue", box=box.ROUNDED)
     table.add_column("Command", width=14, style="cyan")
     table.add_column("Description", style="dim", width=50)
-    table.add_row("login", "Authenticate User (In Development)")
     table.add_row("search", "Search for a song")
     table.add_row("play", "Play a song")
     table.add_row("add-fav", "Add a song to favorites")
@@ -351,12 +400,15 @@ def play(query: str):
     layout["footer"].update(get_controls_panel())
 
     try:
-        with Live(layout, refresh_per_second=10, screen=True):
+        with Live(layout, refresh_per_second=20, screen=True):
             cmd = get_player_command() + [audio_source]
             process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            t = 0.0
             while process.poll() is None:
-                layout["left"].update(get_now_playing_panel(title, artist, is_offline))
-                time.sleep(0.1)
+                layout["left"].update(get_now_playing_panel(title, artist, is_offline, t))
+                t += 0.12
+                time.sleep(0.05)
     except KeyboardInterrupt:
         process.terminate()
 

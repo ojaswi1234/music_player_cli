@@ -6,4 +6,5 @@ python-vlc
 setuptools
 wheel
 tinydb
+browser-cookie3
 questionary

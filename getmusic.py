@@ -41,6 +41,7 @@ def get_music(query):
 
     return songs
 
+
 if __name__ == "__main__":
     query = input("Enter song name or artist: ")
     results = get_music(query)
