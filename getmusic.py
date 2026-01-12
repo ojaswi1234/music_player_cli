@@ -30,6 +30,7 @@ def get_music(query):
     for result in search_results:
         song_info = {
             'title': result['title'],
+            'videoId': result['videoId'],
             'artists': ', '.join([artist['name'] for artist in result['artists']]),
             'album': result['album']['name'] if result.get('album') else 'Single',
             'duration': result['duration'],

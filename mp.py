@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
 import os
 import platform
 import subprocess
@@ -13,31 +12,48 @@ import io
 import random
 from rich.console import Console
 from rich.table import Table
-from rich.progress import track, Progress, SpinnerColumn, BarColumn, TextColumn
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
 from rich.layout import Layout
 from rich.panel import Panel
 from rich.live import Live
 from rich.align import Align
 from rich import box
-from getmusic import get_music
-import json
 
-__version__ = "1.2.0"
+# External project modules
+from getmusic import get_music
+from tinydb import TinyDB, Query 
+
+__version__ = "2.0.0"
 
 console = Console()
 app = typer.Typer()
 
 HISTORY_FILE = "play_history.txt"
 
-# Global configuration for binary storage
+# --- CONFIGURATION & PATHS ---
+# Storing everything in a hidden folder in the User's home directory
 APP_DIR = os.path.join(os.path.expanduser("~"), ".spci")
 BIN_DIR = os.path.join(APP_DIR, "bin")
+FAV_DIR = os.path.join(APP_DIR, "fav_audio") # Store actual .mp3 files here
+FAV_DB_PATH = os.path.join(APP_DIR, "favorites.json") # NoSQL Metadata
+
+# Windows Binary Paths
 FFPLAY_PATH = os.path.join(BIN_DIR, "ffplay.exe")
+FFMPEG_PATH = os.path.join(BIN_DIR, "ffmpeg.exe")
+FFPROBE_PATH = os.path.join(BIN_DIR, "ffprobe.exe")
+
+# Initialize directories
+os.makedirs(BIN_DIR, exist_ok=True)
+os.makedirs(FAV_DIR, exist_ok=True)
+
+# Initialize NoSQL Database
+db = TinyDB(FAV_DB_PATH)
+fav_table = db.table('favorites')
 
 # --- UI COMPONENTS ---
 
 def make_layout() -> Layout:
-    """Define the grid layout for the music player UI."""
+    """Creates a structured grid for the CLI interface."""
     layout = Layout(name="root")
     layout.split(
         Layout(name="header", size=3),
@@ -52,143 +68,175 @@ def make_layout() -> Layout:
 
 def get_header():
     return Panel(
-        Align.center(f"[bold cyan]SPCI MUSIC PLAYER[/bold cyan] v{__version__} | developed by [bold blue][link=https://github.com/ojaswi1234]@ojaswi1234[/link][/bold blue]"),
+        Align.center(f"[bold cyan]SPCI SONIC PULSE[/bold cyan] v{__version__} | [bold yellow]Play once, play again & again[/bold yellow]"),
         box=box.ROUNDED,
         style="white on black"
     )
 
-def get_now_playing_panel(title, artist, visualizer_bars):
-    """Generates the Now Playing panel with a visualizer."""
-    # Create a fake visualizer string
+def get_now_playing_panel(title, artist, is_offline=False):
+    """The central dashboard showing what's currently active."""
+    # Simple randomized visualizer
     vis_string = ""
-    for _ in range(30):
+    for _ in range(40):
         height = random.choice([" ", "▂", "▃", "▄", "▅", "▆", "▇", "█"])
-        vis_string += f"[green]{height}[/green]"
+        vis_string += f"[bold magenta]{height}[/bold magenta]"
+    
+    source_tag = "[bold green]● OFFLINE (LOCAL)[/bold green]" if is_offline else "[bold blue]● STREAMING (YOUTUBE)[/bold blue]"
     
     content = f"""
-[bold white]Title:[/bold white] [yellow]{title}[/yellow]
-[bold white]Artist:[/bold white] [cyan]{artist}[/cyan]
+[bold white]TITLE :[/bold white] [yellow]{title}[/yellow]
+[bold white]ARTIST:[/bold white] [cyan]{artist}[/cyan]
+[bold white]STATUS:[/bold white] {source_tag}
 
-[bold magenta]Visualizer:[/bold magenta]
+[bold white]AUDIO PULSE:[/bold white]
 {vis_string}
 {vis_string}
     """
-    return Panel(content, title="[bold red]Now Playing[/bold red]", border_style="red")
+    return Panel(content, title="[bold red]NOW PLAYING[/bold red]", border_style="red")
 
 def get_controls_panel():
     return Panel(
-        Align.center("[bold white]Playing...[/bold white]\n[dim]Press Ctrl+C to Stop[/dim]"),
+        Align.center("[bold white]ACTIVE SESSION[/bold white]\n[dim]Press Ctrl+C to stop playback and return to terminal[/dim]"),
         title="Controls",
         border_style="blue"
     )
 
-def get_history_panel():
-    """Reads history file and shows last 5 songs."""
+def get_stats_panel():
+    """Sidebar showing database status and history."""
     try:
+        fav_count = len(fav_table.all())
+        content = f"[bold green]Offline Songs: {fav_count}[/bold green]\n\n"
+        content += "[bold white]Recent Activity:[/bold white]\n"
         if os.path.exists(HISTORY_FILE):
             with open(HISTORY_FILE, "r") as f:
-                lines = f.readlines()[-5:] # Get last 5
-            history_text = "".join([f"[dim]• {line.split('|')[0].strip()}[/dim]\n" for line in lines])
+                lines = f.readlines()[-3:]
+            content += "".join([f"[dim]» {line.split('|')[0].strip()[:20]}...[/dim]\n" for line in lines])
         else:
-            history_text = "[dim]No history yet.[/dim]"
+            content += "[dim]No recent plays.[/dim]"
     except:
-        history_text = "[red]Error reading history[/red]"
+        content = "[red]DB Access Error[/red]"
 
-    return Panel(history_text, title="Recent History", border_style="green")
+    return Panel(content, title="SPCI Stats", border_style="green")
 
-# --- BACKEND LOGIC (Unchanged) ---
+# --- CORE BACKEND LOGIC ---
 
-def get_player():
-    """
-    Returns the command list for the best available audio player.
-    Windows: Auto-downloads ffplay.exe if missing.
-    Linux/Mac: Checks for installed ffplay or mpv.
-    """
+def get_player_command():
+    """Checks for binaries and returns the execution command."""
     system = platform.system()
-
-    # Recommended flags for streaming stability
+    # -infbuf allows for smoother playback on slower networks
     ffplay_flags = ["-nodisp", "-autoexit", "-loglevel", "quiet", "-infbuf"] 
 
-    if shutil.which("ffplay"):
-        return ["ffplay"] + ffplay_flags
-    
-    if shutil.which("mpv"):
-        return ["mpv", "--no-video"]
-
     if system == "Windows":
-        # Check global location first
-        if os.path.exists(FFPLAY_PATH):
+        # Check for the 'Trinity' of binaries
+        if all(os.path.exists(p) for p in [FFPLAY_PATH, FFMPEG_PATH, FFPROBE_PATH]):
             return [FFPLAY_PATH] + ffplay_flags
-
-        local_exe = os.path.abspath("ffplay.exe")
-        if os.path.exists(local_exe):
-            return [local_exe] + ffplay_flags
-        return download_ffplay_windows(ffplay_flags)
-    elif system in ["Linux","MacOS" ]:
-        subprocess.run(["apt-get", "install", "mpv"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if shutil.which("mpv"):
-            return ["mpv", "--no-video"]
-        
-
-    console.print(f"\n[bold red]Error: No compatible audio player found on {system}.[/bold red]")
+        return download_trinity_windows(ffplay_flags)
+    
+    # Linux/Mac fallback
+    if shutil.which("ffplay"): return ["ffplay"] + ffplay_flags
+    console.print(f"[bold red]Error: ffplay not found. Please install ffmpeg on your system.[/bold red]")
     sys.exit(1)
 
-def download_ffplay_windows(flags):
-    """Downloads ffplay.exe for Windows users."""
-    console.print("\n[bold yellow]System audio components missing.[/bold yellow]")
-    console.print(f"Downloading [bold]FFplay[/bold] to {FFPLAY_PATH}...")
+def download_trinity_windows(flags):
+    """Automatically downloads the required trio for Windows users."""
+    console.print("\n[bold yellow]Requirement Missing: Audio Engine components not found.[/bold yellow]")
+    console.print(f"Installing to: {BIN_DIR}")
     
+    # Official Gyan.dev link for essential builds
     url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
     
     try:
-        # Ensure the global bin directory exists
-        os.makedirs(BIN_DIR, exist_ok=True)
-
         response = requests.get(url, stream=True)
         response.raise_for_status()
         total_size = int(response.headers.get('content-length', 0))
-        
         buffer = io.BytesIO()
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            console=console
-        ) as progress:
-            task = progress.add_task("[green]Downloading...", total=total_size)
-            for chunk in response.iter_content(chunk_size=8192):
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), console=console) as progress:
+            task = progress.add_task("[green]Fetching Engine...", total=total_size)
+            for chunk in response.iter_content(chunk_size=1024 * 8):
                 buffer.write(chunk)
                 progress.update(task, advance=len(chunk))
         
-        buffer.seek(0) # Reset pointer to start of file for reading
+        buffer.seek(0)
 
-        with console.status("[bold green]Extracting ffplay.exe...[/bold green]"):
+        with console.status("[bold green]Extracting Player, Worker, and Analyzer...[/bold green]"):
             with zipfile.ZipFile(buffer) as z:
                 for file in z.namelist():
                     if file.endswith("bin/ffplay.exe"):
-                        with open(FFPLAY_PATH, "wb") as f:
-                            f.write(z.read(file))
-                        break
+                        with open(FFPLAY_PATH, "wb") as f: f.write(z.read(file))
+                    elif file.endswith("bin/ffmpeg.exe"):
+                        with open(FFMPEG_PATH, "wb") as f: f.write(z.read(file))
+                    elif file.endswith("bin/ffprobe.exe"):
+                        with open(FFPROBE_PATH, "wb") as f: f.write(z.read(file))
         
-        console.print("[bold green]Audio engine ready![/bold green]")
+        console.print("[bold green]Installation Complete![/bold green]")
         return [FFPLAY_PATH] + flags
-
     except Exception as e:
-        console.print(f"[bold red]Download failed:[/bold red] {e}")
+        console.print(f"[bold red]Critical Setup Failure:[/bold red] {e}")
         sys.exit(1)
 
 def log_history(name, video_id):
     with open(HISTORY_FILE, "a") as f:
-        f.write(f"{name} | https://www.youtube.com/watch?v={video_id}\n")
-        
+        f.write(f"{name} | {video_id}\n")
 
-@app.command(short_help="steps to convert spci to global instead of local")
-def setup_help():
-   console.print("[bold green]For making SPCI a global command, please use [    pip install -e .   ] command inside its folder.[/bold green]")
-        
+# --- USER COMMANDS ---
 
+@app.command(short_help="Save a song for offline playback using VideoID")
+def add_fav(video_id: str):
+    """Downloads audio bit-by-bit and registers it in the NoSQL database."""
+    # Ensure worker (ffmpeg) exists
+    get_player_command() 
+
+    local_path = os.path.join(FAV_DIR, f"{video_id}.mp3")
+    url = f"https://www.youtube.com/watch?v={video_id}"
+
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': local_path.replace('.mp3', ''),
+        'ffmpeg_location': BIN_DIR, # CRITICAL: Points to your app's local binaries
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'quiet': True,
+        'noplaylist': True,
+    }
+
+    with console.status(f"[bold green]Buffering '{video_id}' to offline storage...[/bold green]"):
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                # NoSQL Update
+                fav_table.upsert({
+                    'video_id': video_id,
+                    'title': info.get('title'),
+                    'artist': info.get('uploader'),
+                    'path': local_path
+                }, Query().video_id == video_id)
+            console.print(f"\n[bold green]Success![/bold green] '{info.get('title')}' is now stored offline.")
+        except Exception as e:
+            console.print(f"[bold red]Download Error:[/bold red] {e}")
+
+@app.command(short_help="View and manage your offline favorites")
+def show_fav():
+    """Lists all structured data in the favorites NoSQL box."""
+    favs = fav_table.all()
+    if not favs:
+        console.print("[dim]No offline songs found. Try 'add-fav <VideoID>'[/dim]")
+        return
+
+    table = Table(title="OFFLINE FAVORITES", box=box.HEAVY_EDGE)
+    table.add_column("No.", style="dim")
+    table.add_column("Song Title", style="bold white")
+    table.add_column("Artist", style="cyan")
+    table.add_column("Video ID", style="green")
+    
+    for i, song in enumerate(favs, start=1):
+        table.add_row(str(i), song['title'], song['artist'], song['video_id'])
+    
+    console.print(table, justify="center")
+    
 @app.command(short_help="show help")
 def help():
     table = Table(show_header=True, header_style="bold blue", box=box.ROUNDED)
@@ -196,6 +244,9 @@ def help():
     table.add_column("Description", style="dim", width=50)
     table.add_row("search", "Search for a song")
     table.add_row("play", "Play a song")
+    table.add_row("add-fav", "Add a song to favorites")
+    table.add_row("show-fav", "Show offline favorite songs")
+    table.add_row("delete-fav", "Delete a song from favorites")
     table.add_row("show-history", "Show the play history")
     table.add_row("clear-history", "Clear the play history")
     table.add_row("setup-help", "Steps to setup the environment to global")
@@ -224,95 +275,107 @@ def help():
 )
     console.print(table, justify="center")
 
-@app.command(short_help="search")
+
+@app.command(short_help="Find music on YouTube")
 def search(query: str):
-    console.print(f"Searching for: [bold green]{query}[/bold green] ...", style="bold green", justify="center")
-    
-    # Use a nice spinner while searching
-    with console.status("[bold green]Fetching results...[/bold green]", spinner="dots"):
+    """Searches YouTube and displays results with their unique IDs."""
+    with console.status(f"[bold green]Searching for '{query}'...[/bold green]"):
         results = get_music(query)
    
     if results:
-        table = Table(show_header=True, header_style="bold magenta", box=box.SIMPLE)
-        table.add_column("No.", style="dim", width=4)
-        table.add_column("Title", min_width=20, style="bold white")
-        table.add_column("Artists", min_width=20, style="cyan")
-        table.add_column("Album", min_width=20, style="dim")
-        table.add_column("Duration", justify="right", style="green")
+        table = Table(title=f"Results for: {query}", box=box.MINIMAL_DOUBLE_HEAD)
+        table.add_column("ID", style="green")
+        table.add_column("Title", style="bold white")
+        table.add_column("Artist", style="cyan")
+        table.add_column("Length", justify="right")
         
-        for i, song in enumerate(results, start=1):
-            table.add_row(str(i), song['title'], song['artists'], song['album'], song['duration'])
-        
+        for song in results:
+            table.add_row(song['videoId'], song['title'], song['artists'], song['duration'])
         console.print(table, justify="center")
     else:
         console.print("[bold red]No results found.[/bold red]")
 
-@app.command(short_help="play")
+@app.command(short_help="Play a song (Checks offline first)")
+@app.command(short_help="Play a song (Checks offline first)")
 def play(query: str):
-    """
-    Search for a song and stream it immediately with a cool UI.
-    """
-    # 1. Search
-    with console.status(f"[bold green]Searching for '{query}'...[/bold green]", spinner="point"):
-        results = get_music(query)
+    """Modified logic to handle true offline playback."""
+    
+    # 1. IMMEDIATE LOCAL CHECK (By Title or Video ID)
+    # We check if the query matches a title or ID already in our NoSQL DB
+    Song = Query()
+    offline_entry = fav_table.get((Song.video_id == query) | (Song.title == query))
 
-    if not results:
-        console.print("[bold red]No music found.. (try searching with different keywords)[/bold red]")
-        return
-
-    song = results[0]
-    title = song['title']
-    video_id = song['videoId']
-    artist = song['artists']
-
-    log_history(title, video_id)
-
-    # 2. Extract Stream
-    stream_url = None
-    ydl_opts = {'format': 'bestaudio[ext=m4a]/best', 'quiet': True, 'noplaylist': True}
-
-    with console.status("[bold green]Extracting audio stream...[/bold green]", spinner="earth"):
+    if offline_entry and os.path.exists(offline_entry['path']):
+        # If found locally, PLAY IMMEDIATELY - No internet needed
+        title, artist, audio_source = offline_entry['title'], offline_entry['artist'], offline_entry['path']
+        is_offline = True
+    else:
+        # 2. ONLINE FALLBACK
+        # Only search online if we didn't find it in our favorites
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-                stream_url = info.get('url')
-        except Exception as e:
-            console.print(f"[bold red]Error extracting stream:[/bold red] {e}")
+            with console.status(f"[bold green]Searching online for '{query}'...[/bold green]"):
+                results = get_music(query)
+                if not results:
+                    console.print("[bold red]Song not found offline or online.[/bold red]")
+                    return
+                
+                song = results[0]
+                vid, title, artist = song['videoId'], song['title'], song['artists']
+                
+                # Check again if this specific ID from search results is offline
+                second_check = fav_table.get(Song.video_id == vid)
+                if second_check and os.path.exists(second_check['path']):
+                    audio_source = second_check['path']
+                    is_offline = True
+                else:
+                    # Final fallback: Get streaming URL (Requires Internet)
+                    ydl_opts = {'format': 'bestaudio/best', 'quiet': True}
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
+                        audio_source = info.get('url')
+                    is_offline = False
+        except Exception:
+            console.print("[bold red]Offline Error:[/bold red] Song not in favorites and no internet connection found.")
             return
 
-    if not stream_url:
-        console.print("[bold red]Could not retrieve audio stream.[/bold red]")
-        return
-
-    # 3. Setup UI Layout
-    player_cmd = get_player()
-    full_cmd = player_cmd + [stream_url]
-    
+    # UI EXECUTION
     layout = make_layout()
     layout["header"].update(get_header())
-    layout["right"].update(get_history_panel())
+    layout["right"].update(get_stats_panel())
     layout["footer"].update(get_controls_panel())
 
-    # 4. Play with Live UI
     try:
-        # Live Loop: Updates the visualizer while the song plays
-        with Live(layout, refresh_per_second=4, screen=True) as live:
-            for i in range(10):
-                # Start the player process
-                process = subprocess.Popen(full_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                
-                while process.poll() is None: # While process is running
-                    # Update visualizer animation
-                    layout["left"].update(get_now_playing_panel(title, artist, None))
-                    time.sleep(0.25)
-        
-        console.print("[bold yellow]Playback finished.[/bold yellow]")
-
+        with Live(layout, refresh_per_second=10, screen=True):
+            cmd = get_player_command() + [audio_source]
+            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            while process.poll() is None:
+                layout["left"].update(get_now_playing_panel(title, artist, is_offline))
+                time.sleep(0.1)
     except KeyboardInterrupt:
-        process.kill() # Ensure player stops
-        console.print("\n[bold yellow]Playback stopped by user.[/bold yellow]")
+        process.terminate()
+
+@app.command(short_help="Remove a song from your offline favorites")
+def delete_fav(video_id: str):
+    """Deletes the local audio file and removes metadata from TinyDB."""
+    Song = Query()
+    item = fav_table.get(Song.video_id == video_id)
+
+    if not item:
+        console.print(f"[bold red]Error:[/bold red] Video ID '{video_id}' not found in favorites.")
+        return
+
+    # 1. Delete the physical file
+    file_path = item.get('path')
+    try:
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+            console.print(f"[dim]Physical file removed: {video_id}.mp3[/dim]")
     except Exception as e:
-        console.print(f"[bold red]Player Error:[/bold red] {e}")
+        console.print(f"[bold yellow]Warning:[/bold yellow] Could not delete file: {e}")
+
+    # 2. Remove from NoSQL Database
+    fav_table.remove(Song.video_id == video_id)
+    console.print(f"[bold green]Deleted![/bold green] '{item['title']}' has been removed from SPCI.")
 
 @app.command()
 def show_history():
@@ -335,6 +398,7 @@ def clear_history():
     if os.path.exists(HISTORY_FILE):
         os.remove(HISTORY_FILE)
         console.print("[bold green]History cleared.[/bold green]")
+
 
 if __name__ == "__main__":
     app()
