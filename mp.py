@@ -175,10 +175,17 @@ def get_player_command():
             return [FFPLAY_PATH] + ffplay_flags
         return download_trinity_windows(ffplay_flags)
     
-    # Linux/Mac fallback
-    if shutil.which("ffplay"): return ["ffplay"] + ffplay_flags
-    console.print(f"[bold red]Error: ffplay not found. Please install ffmpeg on your system.[/bold red]")
+    if system != "Windows":
+        if shutil.which("mpv"):
+            return ["mpv", "--no-video", "--no-terminal"]
+        if shutil.which("ffplay"):
+            return ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]
+        
+    console.print("[bold red]Critical Setup Failure:[/bold red] No compatible audio player found.")
+    console.print("INSTALLING FFMPEG.....")
+    subprocess.run("pip install ffmpeg-python mpv ", shell=True)
     sys.exit(1)
+
 
 def download_trinity_windows(flags):
     """Automatically downloads the required trio for Windows users."""
@@ -249,40 +256,53 @@ def login():
 
 @app.command(short_help="Save a song for offline playback using VideoID")
 def add_fav(video_id: str):
-    """Downloads audio bit-by-bit and registers it in the NoSQL database."""
-    # Ensure worker (ffmpeg) exists
-    get_player_command() 
-
+    """Downloads a song for offline playback (Modified for Cross-Platform)."""
+    
+    # MODIFIED: Removed the hard dependency on 'FFMPEG_PATH' check for non-windows
+    if platform.system() == "Windows":
+        get_player_command() # This ensures the .exe files are downloaded on Windows
+        
     local_path = os.path.join(FAV_DIR, f"{video_id}.mp3")
-    url = f"https://www.youtube.com/watch?v={video_id}"
-
+    
+    # MODIFIED: Quality reduced to '128' to save 33% disk space per your request
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': local_path.replace('.mp3', ''),
-        'ffmpeg_location': BIN_DIR, # CRITICAL: Points to your app's local binaries
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '192',
+            'preferredquality': '128', # Reduced from 192 to 128
         }],
         'quiet': True,
-        'noplaylist': True,
     }
 
-    with console.status(f"[bold green]Buffering '{video_id}' to offline storage...[/bold green]"):
+    # MODIFIED: Dynamic FFmpeg Location
+    # We only tell yt-dlp where ffmpeg is on Windows. 
+    # On Termux/Linux, it will automatically find it in the system path.
+    if platform.system() == "Windows":
+        ydl_opts['ffmpeg_location'] = BIN_DIR 
+
+    # MODIFIED: Added the browser-cookie logic so 'add_fav' can download age-restricted songs
+    browser = get_browser()
+    if browser:
+        ydl_opts['cookiesfrombrowser'] = (browser,)
+
+    with console.status(f"[bold green]Buffering {video_id}...[/bold green]"):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                # NoSQL Update
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
+                
+                # Update NoSQL DB
                 fav_table.upsert({
                     'video_id': video_id,
                     'title': info.get('title'),
                     'artist': info.get('uploader'),
                     'path': local_path
                 }, Query().video_id == video_id)
-            console.print(f"\n[bold green]Success![/bold green] '{info.get('title')}' is now stored offline.")
+                
+            console.print(f"\n[bold green]Success![/bold green] '{info.get('title')}' saved to offline library.")
         except Exception as e:
-            console.print(f"[bold red]Download Error:[/bold red] {e}")
+            console.print(f"[bold red]Error:[/bold red] {e}")
 
 @app.command(short_help="View and manage your offline favorites")
 def show_fav():
