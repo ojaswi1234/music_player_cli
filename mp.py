@@ -49,6 +49,7 @@ os.makedirs(FAV_DIR, exist_ok=True)
 # Initialize NoSQL Database
 db = TinyDB(FAV_DB_PATH)
 fav_table = db.table('favorites')
+config_table = db.table('config')
 
 # --- UI COMPONENTS ---
 
@@ -68,27 +69,52 @@ def make_layout() -> Layout:
 
 def get_header():
     return Panel(
-        Align.center(f"[bold cyan]SPCI SONIC PULSE[/bold cyan] v{__version__} | [bold yellow]Play once, play again & again[/bold yellow]"),
+        Align.center(f"[bold cyan]SPCI SONIC PULSE[/bold cyan] v{__version__} | [bold yellow]Play once, play again & again[/bold yellow] | developed by [bold blue][link=https://github.com/ojaswi1234]@ojaswi1234[/bold blue]", vertical="middle"),
         box=box.ROUNDED,
         style="white on black"
     )
 
+import math
+import time
+
 def get_now_playing_panel(title, artist, is_offline=False):
-    """The central dashboard showing what's currently active."""
-    # Simple randomized visualizer
-    vis_string = ""
-    for _ in range(40):
-        height = random.choice([" ", "▂", "▃", "▄", "▅", "▆", "▇", "█"])
-        vis_string += f"[bold magenta]{height}[/bold magenta]"
+    """An advanced visualizer using sine-wave logic for smooth motion."""
+    # We use time to create a 'shifting' effect
+    t = time.time() * 10 
     
-    source_tag = "[bold green]● OFFLINE (LOCAL)[/bold green]" if is_offline else "[bold blue]● STREAMING (YOUTUBE)[/bold blue]"
+    # Unicode block characters for a smooth 'gradient' look
+    # From shortest to tallest:  ▂ ▃ ▄ ▅ ▆ ▇ █
+    blocks = [" ", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
+    
+    vis_string = ""
+    num_bars = 40
+    
+    for i in range(num_bars):
+        # We combine two sine waves to make the motion look complex and 'musical'
+        # Wave 1: slow pulse | Wave 2: faster jitter
+        wave = math.sin(t + i * 0.5) * 0.5 + math.sin(t * 1.5 + i * 0.2) * 0.3
+        
+        # Normalize wave value (-1.0 to 1.0) to index (0 to 7)
+        # We use abs() to make the 'pulse' go upwards from a baseline
+        index = int((abs(wave) * (len(blocks) - 1)))
+        
+        # Add color based on height: green for low, yellow for mid, red for peak
+        bar = blocks[index]
+        if index < 3:
+            vis_string += f"[green]{bar}[/green]"
+        elif index < 6:
+            vis_string += f"[yellow]{bar}[/yellow]"
+        else:
+            vis_string += f"[bold red]{bar}[/bold red]"
+
+    source_tag = "[bold green]● OFFLINE[/bold green]" if is_offline else "[bold blue]● STREAMING[/bold blue]"
     
     content = f"""
 [bold white]TITLE :[/bold white] [yellow]{title}[/yellow]
 [bold white]ARTIST:[/bold white] [cyan]{artist}[/cyan]
 [bold white]STATUS:[/bold white] {source_tag}
 
-[bold white]AUDIO PULSE:[/bold white]
+[bold white]SONIC PULSE:[/bold white]
 {vis_string}
 {vis_string}
     """
@@ -119,6 +145,23 @@ def get_stats_panel():
     return Panel(content, title="SPCI Stats", border_style="green")
 
 # --- CORE BACKEND LOGIC ---
+
+def get_ydl_opts(extra_params=None):
+    res = config_table.get(Query().key == 'browser')
+    browser = res['value'] if res else None
+
+    opts = {
+        'quiet': True,
+        'noplaylist': True,
+    }
+
+    if browser:
+        # This acts as your 'Google Login'
+        opts['cookiesfrombrowser'] = (browser,) 
+        
+    if extra_params:
+        opts.update(extra_params)
+    return opts
 
 def get_player_command():
     """Checks for binaries and returns the execution command."""
@@ -181,6 +224,29 @@ def log_history(name, video_id):
 
 # --- USER COMMANDS ---
 
+@app.command()
+def login():
+    """Link SPCI to your browser. No files, no codes, no headers."""
+    console.print("[bold cyan]SPCI Browser-Link Setup[/bold cyan]")
+
+    console.print(Panel(
+        """[white]
+1. Open your browser and log in to YouTube.
+2. [bold red]Close the browser completely[/bold red] (to release the cookie file).
+3. Type the browser name below when prompted.
+        [/white]""",
+        title="[yellow]Instructions[/yellow]",
+        border_style="yellow"
+    ))
+
+    browser = typer.prompt("Which browser has your YouTube login? (chrome, edge, firefox, opera)")
+    
+    # Save this to your TinyDB config
+    config_table.upsert({'key': 'browser', 'value': browser.lower()}, Query().key == 'browser')
+    
+    console.print(f"\n[bold green]Success![/bold green] SPCI will now 'borrow' cookies from {browser}.")
+    console.print("[dim]Note: Ensure the browser is closed if you get a 'database is locked' error.[/dim]")
+
 @app.command(short_help="Save a song for offline playback using VideoID")
 def add_fav(video_id: str):
     """Downloads audio bit-by-bit and registers it in the NoSQL database."""
@@ -237,14 +303,17 @@ def show_fav():
     
     console.print(table, justify="center")
     
+
+    
 @app.command(short_help="show help")
 def help():
     table = Table(show_header=True, header_style="bold blue", box=box.ROUNDED)
     table.add_column("Command", width=14, style="cyan")
     table.add_column("Description", style="dim", width=50)
+    table.add_row("login", "Link SPCI to your browser for authenticated access")
     table.add_row("search", "Search for a song")
     table.add_row("play", "Play a song")
-    table.add_row("add-fav", "Add a song to favorites")
+    table.add_row("add_fav", "Add a song to favorites")
     table.add_row("show-fav", "Show offline favorite songs")
     table.add_row("delete-fav", "Delete a song from favorites")
     table.add_row("show-history", "Show the play history")
@@ -398,7 +467,13 @@ def clear_history():
     if os.path.exists(HISTORY_FILE):
         os.remove(HISTORY_FILE)
         console.print("[bold green]History cleared.[/bold green]")
+        
 
+@app.command()
+def setup_help():
+    console.print(Panel(
+        """[white] run [bold]( pip install -e . )[/bold] in the directory to install SPCI in global mode[/white]"""
+    ))
 
 if __name__ == "__main__":
     app()
