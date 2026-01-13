@@ -385,66 +385,67 @@ def search(query: str):
         
         
 
-@app.command(short_help="Play a song (mpv optimized)")
+@app.command(short_help="Play a song (Checks offline first)")
 def play(query: str):
-    """Checks for any saved audio format and plays using the best available engine."""
+    """Handles playback with robust variable initialization to prevent crashes."""
     Song = Query()
     offline_entry = fav_table.get((Song.video_id == query) | (Song.title == query))
 
+    # 1. INITIALIZE VARIABLES (Prevents UnboundLocalError)
+    title = "Unknown Title"
+    artist = "Unknown Artist"
+    vid = query
     audio_source = None
     is_offline = False
 
     if offline_entry:
-        # Check the exact path stored, but also check for variations
-        if os.path.exists(offline_entry['path']):
-            audio_source = offline_entry['path']
-            is_offline = True
-        else:
-            # Check if the file exists with a different extension (safety)
-            base = os.path.join(FAV_DIR, offline_entry['video_id'])
-            for ext in ['.webm', '.m4a', '.mp3', '.opus']:
-                if os.path.exists(base + ext):
-                    audio_source = base + ext
-                    is_offline = True
-                    break
+        # Check for the file (supports multiple extensions for mpv)
+        base_path = os.path.splitext(offline_entry['path'])[0]
+        for ext in ['.webm', '.m4a', '.mp3', '.opus']:
+            test_path = base_path + ext
+            if os.path.exists(test_path):
+                audio_source = test_path
+                title = offline_entry.get('title', 'Unknown')
+                artist = offline_entry.get('artist', 'Unknown')
+                vid = offline_entry.get('video_id', query)
+                is_offline = True
+                break
 
     if not is_offline:
+        # 2. ONLINE FALLBACK
         try:
             with console.status(f"[bold green]Searching online for '{query}'...[/bold green]"):
                 results = get_music(query)
-                if not results: return console.print("[red]Not found.[/red]")
+                if not results:
+                    return console.print("[bold red]Song not found offline or online.[/bold red]")
                 
                 song = results[0]
                 vid, title, artist = song['videoId'], song['title'], song['artists']
                 
-                # Check online result against DB again
+                # Double check search result against DB
                 second_check = fav_table.get(Song.video_id == vid)
                 if second_check and os.path.exists(second_check['path']):
                     audio_source, is_offline = second_check['path'], True
                 else:
-                    # Stream low-bitrate (64kbps) to save bandwidth
+                    # Stream 64kbps to save bandwidth
                     ydl_opts = {'format': 'bestaudio[abr<=64]/bestaudio/best', 'quiet': True}
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
                         audio_source = info.get('url')
                     is_offline = False
         except Exception:
-            return console.print("[bold red]Offline Error:[/bold red] Song not in favorites and no internet.")
-        
-        
-    if not audio_source:
-       
-        pass
+            return console.print("[bold red]Error:[/bold red] Check internet or favorites.")
 
-    # HISTORY LOGGING FIXED
+    # 3. LOG HISTORY (Variables are now guaranteed to exist)
     log_history(title, vid)
 
     # UI EXECUTION
     layout = make_layout()
     try:
-      with Live(layout, refresh_per_second=20, screen=True):
-            cmd = get_player_command() + [audio_source]
-            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with Live(layout, refresh_per_second=20, screen=True):
+            # Uses mpv or ffplay based on OS detection
+            process = subprocess.Popen(get_player_command() + [audio_source], 
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             t = 0.0
             while process.poll() is None:
                 layout["header"].update(get_header())
