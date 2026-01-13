@@ -173,57 +173,40 @@ def get_stats_panel():
 # --- CORE BACKEND LOGIC ---
 
 def get_player_command():
-    """Checks for binaries and returns the execution command."""
+    """Checks for binaries and returns the execution command for Win/Linux/macOS."""
     system = platform.system()
-    # -infbuf allows for smoother playback on slower networks
     ffplay_flags = ["-nodisp", "-autoexit", "-loglevel", "quiet", "-infbuf"] 
 
     if system == "Windows":
-        # Check for the 'Trinity' of binaries
         if all(os.path.exists(p) for p in [FFPLAY_PATH, FFMPEG_PATH, FFPROBE_PATH]):
             return [FFPLAY_PATH] + ffplay_flags
         return download_trinity_windows(ffplay_flags)
+    
+    # Corrected Logic for Linux and macOS (Darwin)
     elif system in ["Linux", "Darwin"]:
-        console.print("\n[bold yellow]Checking for Audio Engine components...[/bold yellow]")
         ffplay_path = shutil.which("ffplay")
         mpv_path = shutil.which("mpv")
+        
+        if ffplay_path:
+            return [ffplay_path] + ffplay_flags
+        
+        # Fallback to mpv if installed
         if mpv_path:
-            console.print(f"[bold green]Using 'mpv' as fallback player at:[/bold green] {mpv_path}")
-            return [mpv_path, "--no-video"] + ffplay_flags
-        if ffplay_path:
-            console.print(f"[bold green]Found:[/bold green] {ffplay_path}")
-            return [ffplay_path] + ffplay_flags
-        else:
-            console.print("[bold red]Error:[/bold red] 'ffplay' not found in system PATH")
-            subprocess.run([sys.executable, "-m", "pip", "install", "ffmpeg", "mpv"], check=True)  # Prompt user to install ffmpeg
-            sys.exit(1)
+            console.print(f"[bold green]Using 'mpv' as fallback player.[/bold green]")
+            return [mpv_path, "--no-video"]
             
+   
+        console.print("[bold red]Error:[/bold red] Audio engine (ffmpeg/ffplay) not found.")
+        if system == "Darwin":
+            subprocess.run(["brew", "install", "ffmpeg", "mpv", "--quiet"], check=True)
             
-    elif system == "macOS":
-        console.print("\n[bold yellow]Checking for Audio Engine components...[/bold yellow]")
-        ffplay_path = shutil.which("ffplay")
-        if ffplay_path:
-            console.print(f"[bold green]Found:[/bold green] {ffplay_path}")
-            return [ffplay_path] + ffplay_flags
         else:
-            console.print("[bold red]Error:[/bold red] 'ffplay' not found in system PATH")
-            console.print("[bold yellow] INSTALLING via Homebrew... [/bold yellow]")
-            try:
-                subprocess.run(["brew", "install", "ffmpeg", "mpv"], check=True)
-                ffplay_path = shutil.which("ffplay")
-                mpv_path = shutil.which("mpv") 
-                if ffplay_path:
-                    console.print(f"[bold green]Successfully installed ffplay at:[/bold green] {ffplay_path}")
-                    return [ffplay_path] + ffplay_flags
-                if mpv_path:
-                    console.print(f"[bold green]Using 'mpv' as fallback player at:[/bold green] {mpv_path}")
-                    return [mpv_path, "--no-video"] + ffplay_flags
-                else:
-                    console.print("[bold red]Critical Error:[/bold red] 'ffplay' still not found after installation.")
-            except Exception as e:
-                console.print(f"[bold red]Installation Error:[/bold red] {e}")
-            sys.exit(1)
+            subprocess.run(["sudo", "apt", "install", "-y", "ffmpeg", "mpv" ], check=True)
+            
+        sys.exit(1)
     
+    return ["ffplay"] + ffplay_flags
+
 
 def download_trinity_windows(flags):
     """Automatically downloads the required trio for Windows users."""
@@ -436,6 +419,8 @@ def play(query: str):
             console.print("[dim]Song not in favorites. Check your internet connection or authentication setup.[/dim]")
             console.print("[dim]Run 'spci setup-help' for global setup [/dim]")
             return
+        
+    log_history(title, vid)
 
     # UI EXECUTION
     layout = make_layout()
