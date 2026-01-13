@@ -1,52 +1,54 @@
-from ytmusicapi import YTMusic
+import yt_dlp
 import os
 
-id = None
-
 def get_music(query):
-    # Get the directory where this script is located
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    auth_path = os.path.join(base_dir, "headers_auth.json")
+    """
+    Searches YouTube and filters results to include only song-length videos.
+    """
+    # Define your maximum duration in seconds (e.g., 6 minutes)
+    MAX_DURATION = 360 
 
-    if not os.path.exists(auth_path):
-        print(f"\n[!] Authentication file missing: {auth_path}")
-        print("-" * 60)
-        print("To generate 'headers_auth.json':")
-        print("1. Open https://music.youtube.com in your browser (ensure you are logged in).")
-        print("2. Open Developer Tools (F12), go to the 'Network' tab.")
-        print("3. Search for any song to trigger network requests.")
-        print("4. Find a request like 'search' or 'browse' (filter by 'XHR' or 'Fetch').")
-        print("5. Right-click the request > Copy > Copy Request Headers.")
-        print("6. Run the following command in your terminal:")
-        print("   ytmusicapi browser")
-        print("7. Paste the copied headers when prompted.")
-        print(f"8. This will generate 'browser.json'. Rename it to 'headers_auth.json' and move it to: {base_dir}")
-        print("-" * 60)
-        return []
-
-    ytmusic = YTMusic(auth_path)
-    search_results = ytmusic.search(query, filter='songs')
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': True,
+        'nocheckcertificate': True,
+    }
+    
+    # We add "audio" and "song" to the query for better results
+    search_query = f"ytsearch15:{query} song audio"
+    
     songs = []
-    for result in search_results:
-        song_info = {
-            'title': result['title'],
-            'videoId': result['videoId'],
-            'artists': ', '.join([artist['name'] for artist in result['artists']]),
-            'album': result['album']['name'] if result.get('album') else 'Single',
-            'duration': result['duration'],
-            'videoId': result['videoId']
-        }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            result = ydl.extract_info(search_query, download=False)
+            
+            if 'entries' in result:
+                for entry in result['entries']:
+                    duration_sec = entry.get('duration')
+                    
+                    # FILTER: Skip videos that are too long or have no duration info
+                    if not duration_sec or duration_sec > MAX_DURATION:
+                        continue
+                        
+                    duration_str = f"{int(duration_sec // 60)}:{int(duration_sec % 60):02d}"
+                        
+                    songs.append({
+                        'title': entry.get('title'),
+                        'videoId': entry.get('id'),
+                        'artists': entry.get('uploader') or "Unknown",
+                        'album': "YouTube",
+                        'duration': duration_str
+                    })
+    except Exception as e:
+        print(f"\n[bold red][!] Search Error:[/bold red] {e}")
         
-        songs.append(song_info)
-
     return songs
 
-
 if __name__ == "__main__":
-    query = input("Enter song name or artist: ")
+    query = input("Search YouTube: ")
     results = get_music(query)
     if results:
         for i, song in enumerate(results, start=1):
-            print(f"{i}. {song['title']} by {song['artists']} [{song['album']}] - {song['duration']}")
-    else:
-        print("No results found.")
+            print(f"{i}. {song['title']} by {song['artists']} - {song['duration']}")

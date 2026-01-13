@@ -94,7 +94,7 @@ def get_now_playing_panel(title, artist, is_offline=False, t=0.0):
 
     # Glyph ramp from faint -> bold
     glyphs = [" ", "·", "•", "●", "█"]
-    colors = ["dim", "cyan", "magenta", "green", "yellow"]
+    colors = ["dim", "red", "cyan", "indigo", "magenta", "green", "yellow", "orange", "bright_white"]
 
     # Parameters that control elegance
     base_freq = 0.9 + (viz_width / 80)        # spatial frequency
@@ -111,7 +111,7 @@ def get_now_playing_panel(title, artist, is_offline=False, t=0.0):
             backbone = math.sin((x / viz_width) * base_freq * 2 * math.pi + t * speed)
             micro = math.sin((x * 0.7 + y * 0.4) * 0.4 + t * 1.7) * 0.15
             y_center = cy + (backbone + micro) * amplitude
-
+            
             # distance from ribbon centerline for this column
             dist = abs(y - y_center)
 
@@ -130,21 +130,19 @@ def get_now_playing_panel(title, artist, is_offline=False, t=0.0):
         grid_rows.append("".join(row))
 
     vis = "\n".join(grid_rows)
-
     source_tag = (
-        "[bold green]● OFFLINE (LOCAL)[/bold green]" if is_offline
-        else "[bold blue]● STREAMING (YOUTUBE)[/bold blue]"
-    )
+        "[bold red]● OFFLINE (LOCAL)[/bold red]" if is_offline
+    else "[bold green]● STREAMING (YOUTUBE)[/bold green]"
+)
 
     content = f"""
 [bold white]TITLE :[/bold white] [yellow]{title}[/yellow]
 [bold white]ARTIST:[/bold white] [cyan]{artist}[/cyan]
 [bold white]STATUS:[/bold white] {source_tag}
-
 {vis}
     """.rstrip()
 
-    return Panel(Align.center(content), title="[bold red]NOW PLAYING[/bold red]", border_style="red")
+    return Panel(Align.center(content), title="[bold green]NOW PLAYING[/bold green]", border_style="green")
 
 
 
@@ -185,11 +183,47 @@ def get_player_command():
         if all(os.path.exists(p) for p in [FFPLAY_PATH, FFMPEG_PATH, FFPROBE_PATH]):
             return [FFPLAY_PATH] + ffplay_flags
         return download_trinity_windows(ffplay_flags)
+    elif system in ["Linux", "Darwin"]:
+        console.print("\n[bold yellow]Checking for Audio Engine components...[/bold yellow]")
+        ffplay_path = shutil.which("ffplay")
+        mpv_path = shutil.which("mpv")
+        if mpv_path:
+            console.print(f"[bold green]Using 'mpv' as fallback player at:[/bold green] {mpv_path}")
+            return [mpv_path, "--no-video"] + ffplay_flags
+        if ffplay_path:
+            console.print(f"[bold green]Found:[/bold green] {ffplay_path}")
+            return [ffplay_path] + ffplay_flags
+        else:
+            console.print("[bold red]Error:[/bold red] 'ffplay' not found in system PATH")
+            subprocess.run([sys.executable, "-m", "pip", "install", "ffmpeg", "mpv"], check=True)  # Prompt user to install ffmpeg
+            sys.exit(1)
+            
+            
+    elif system == "macOS":
+        console.print("\n[bold yellow]Checking for Audio Engine components...[/bold yellow]")
+        ffplay_path = shutil.which("ffplay")
+        if ffplay_path:
+            console.print(f"[bold green]Found:[/bold green] {ffplay_path}")
+            return [ffplay_path] + ffplay_flags
+        else:
+            console.print("[bold red]Error:[/bold red] 'ffplay' not found in system PATH")
+            console.print("[bold yellow] INSTALLING via Homebrew... [/bold yellow]")
+            try:
+                subprocess.run(["brew", "install", "ffmpeg", "mpv"], check=True)
+                ffplay_path = shutil.which("ffplay")
+                mpv_path = shutil.which("mpv") 
+                if ffplay_path:
+                    console.print(f"[bold green]Successfully installed ffplay at:[/bold green] {ffplay_path}")
+                    return [ffplay_path] + ffplay_flags
+                if mpv_path:
+                    console.print(f"[bold green]Using 'mpv' as fallback player at:[/bold green] {mpv_path}")
+                    return [mpv_path, "--no-video"] + ffplay_flags
+                else:
+                    console.print("[bold red]Critical Error:[/bold red] 'ffplay' still not found after installation.")
+            except Exception as e:
+                console.print(f"[bold red]Installation Error:[/bold red] {e}")
+            sys.exit(1)
     
-    # Linux/Mac fallback
-    if shutil.which("ffplay"): return ["ffplay"] + ffplay_flags
-    console.print(f"[bold red]Error: ffplay not found. Please install ffmpeg on your system.[/bold red]")
-    sys.exit(1)
 
 def download_trinity_windows(flags):
     """Automatically downloads the required trio for Windows users."""
@@ -235,6 +269,11 @@ def log_history(name, video_id):
 
 # --- USER COMMANDS ---
 
+
+@app.command()
+def setup():
+    subprocess.run([sys.executable, "pip", "install", "-e", "."], check=True) 
+
 @app.command(short_help="Save a song for offline playback using VideoID")
 def add_fav(video_id: str):
     """Downloads audio bit-by-bit and registers it in the NoSQL database."""
@@ -259,8 +298,10 @@ def add_fav(video_id: str):
 
     with console.status(f"[bold green]Buffering '{video_id}' to offline storage...[/bold green]"):
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
+            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+                if info.get('duration', 0) > 360:
+                    return console.print("[bold red]Error:[/bold red] This video is too long to be a standard song.")
                 # NoSQL Update
                 fav_table.upsert({
                     'video_id': video_id,
@@ -300,12 +341,12 @@ def help():
     table.add_column("Description", style="dim", width=50)
     table.add_row("search", "Search for a song")
     table.add_row("play", "Play a song")
-    table.add_row("add-fav", "Add a song to favorites")
+    table.add_row("add-fav", "Add a song to favorites for offline playback")
     table.add_row("show-fav", "Show offline favorite songs")
-    table.add_row("delete-fav", "Delete a song from favorites")
+    table.add_row("delete-fav", "Delete a song from offline favorites")
     table.add_row("show-history", "Show the play history")
     table.add_row("clear-history", "Clear the play history")
-    table.add_row("setup-help", "Steps to setup the environment to global")
+    table.add_row("setup", "setup the environment to global")
 
     console.print(
     Panel(
@@ -332,17 +373,17 @@ def help():
     console.print(table, justify="center")
 
 
-@app.command(short_help="Find music on YouTube")
+@app.command(short_help="Find music online")
 def search(query: str):
-    """Searches YouTube and displays results with their unique IDs."""
-    with console.status(f"[bold green]Searching for '{query}'...[/bold green]"):
+    """Searches Online and displays results with their unique IDs."""
+    with console.status(f"[bold green]Searching music online '{query}'...[/bold green]"):
         results = get_music(query)
    
     if results:
-        table = Table(title=f"Results for: {query}", box=box.MINIMAL_DOUBLE_HEAD)
+        table = Table(title=f"YouTube Results for: {query}", box=box.MINIMAL_DOUBLE_HEAD)
         table.add_column("ID", style="green")
         table.add_column("Title", style="bold white")
-        table.add_column("Artist", style="cyan")
+        table.add_column("Channel/Artist", style="cyan")
         table.add_column("Length", justify="right")
         
         for song in results:
@@ -372,6 +413,7 @@ def play(query: str):
                 results = get_music(query)
                 if not results:
                     console.print("[bold red]Song not found offline or online.[/bold red]")
+                    console.print("[dim]Tip: Run 'spci setup-help' for authentication setup [/dim]")
                     return
                 
                 song = results[0]
@@ -389,8 +431,10 @@ def play(query: str):
                         info = ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
                         audio_source = info.get('url')
                     is_offline = False
-        except Exception:
-            console.print("[bold red]Offline Error:[/bold red] Song not in favorites and no internet connection found.")
+        except Exception as e:
+            console.print(f"[bold red]Error:[/bold red] {e}")
+            console.print("[dim]Song not in favorites. Check your internet connection or authentication setup.[/dim]")
+            console.print("[dim]Run 'spci setup-help' for global setup [/dim]")
             return
 
     # UI EXECUTION
@@ -456,6 +500,7 @@ def clear_history():
     if os.path.exists(HISTORY_FILE):
         os.remove(HISTORY_FILE)
         console.print("[bold green]History cleared.[/bold green]")
+
 
 
 if __name__ == "__main__":
