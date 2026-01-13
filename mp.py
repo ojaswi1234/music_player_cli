@@ -255,7 +255,7 @@ def log_history(name, video_id):
 
 @app.command()
 def setup():
-    subprocess.run([sys.executable, "pip", "install", "-e", "."], check=True) 
+    subprocess.run(["pip", "install", "-e", "."], check=True) 
 
 @app.command(short_help="Save a song for offline playback using VideoID")
 def add_fav(video_id: str):
