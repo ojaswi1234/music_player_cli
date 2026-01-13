@@ -171,9 +171,34 @@ def get_stats_panel():
     return Panel(content, title="SPCI Stats", border_style="green")
 
 # --- CORE BACKEND LOGIC ---
+def auto_install_dependencies(system):
+    """Uses subprocess to install ffmpeg and mpv based on the OS."""
+    try:
+        if system == "Darwin":  # macOS
+            if shutil.which("brew"):
+                console.print("[yellow]macOS detected. Installing via Homebrew...[/yellow]")
+                subprocess.run(["brew", "install", "ffmpeg", "mpv"], check=True)
+            else:
+                console.print("[red]Homebrew not found. Please install Homebrew first.[/red]")
+        
+        elif system == "Linux":
+            # Check for common Linux package managers
+            if shutil.which("apt"):
+                console.print("[yellow]Linux (Debian/Ubuntu) detected. Installing via apt...[/yellow]")
+                # Using sudo may require user password input in terminal
+                subprocess.run(["sudo", "apt", "update"], check=True)
+                subprocess.run(["sudo", "apt", "install", "-y", "ffmpeg", "mpv"], check=True)
+            elif shutil.which("pacman"):
+                console.print("[yellow]Arch Linux detected. Installing via pacman...[/yellow]")
+                subprocess.run(["sudo", "pacman", "-S", "--noconfirm", "ffmpeg", "mpv"], check=True)
+            elif shutil.which("dnf"):
+                console.print("[yellow]Fedora detected. Installing via dnf...[/yellow]")
+                subprocess.run(["sudo", "dnf", "install", "-y", "ffmpeg", "mpv"], check=True)
+    except subprocess.CalledProcessError as e:
+        console.print(f"[bold red]Installation failed:[/bold red] {e}")
 
 def get_player_command():
-    """Checks for binaries and returns the execution command for Win/Linux/macOS."""
+    """Checks for binaries and auto-installs them on Linux/macOS if missing."""
     system = platform.system()
     ffplay_flags = ["-nodisp", "-autoexit", "-loglevel", "quiet", "-infbuf"] 
 
@@ -182,69 +207,56 @@ def get_player_command():
             return [FFPLAY_PATH] + ffplay_flags
         return download_trinity_windows(ffplay_flags)
     
-    # Corrected Logic for Linux and macOS (Darwin)
     elif system in ["Linux", "Darwin"]:
         ffplay_path = shutil.which("ffplay")
         mpv_path = shutil.which("mpv")
         
         if ffplay_path:
             return [ffplay_path] + ffplay_flags
-        
-        # Fallback to mpv if installed
         if mpv_path:
-            console.print(f"[bold green]Using 'mpv' as fallback player.[/bold green]")
             return [mpv_path, "--no-video"]
+
+        # If both are missing, attempt auto-download/install
+        auto_install_dependencies(system)
+        
+        # Re-check after installation attempt
+        new_path = shutil.which("ffplay") or shutil.which("mpv")
+        if new_path:
+            return [new_path] + (ffplay_flags if "ffplay" in new_path else ["--no-video"])
             
-   
-        console.print("[bold red]Error:[/bold red] Audio engine (ffmpeg/ffplay) not found.")
-        if system == "Darwin":
-            subprocess.run(["brew", "install", "ffmpeg", "mpv", "--quiet"], check=True)
-            
-        else:
-            subprocess.run(["sudo", "apt", "install", "-y", "ffmpeg", "mpv" ], check=True)
-            
+        console.print("[bold red]Error:[/bold red] Auto-install failed. Please install ffmpeg manually.")
         sys.exit(1)
-    
-    return ["ffplay"] + ffplay_flags
 
 
 def download_trinity_windows(flags):
-    """Automatically downloads the required trio for Windows users."""
-    console.print("\n[bold yellow]Requirement Missing: Audio Engine components not found.[/bold yellow]")
-    console.print(f"Installing to: {BIN_DIR}")
-    
-    # Official Gyan.dev link for essential builds
+    """Fixed: Path-agnostic extraction for Windows binaries."""
+    console.print("\n[bold yellow]Requirement Missing: Audio Engine not found.[/bold yellow]")
     url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
     
-    try:
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
-        total_size = int(response.headers.get('content-length', 0))
-        buffer = io.BytesIO()
+    response = requests.get(url, stream=True)
+    total_size = int(response.headers.get('content-length', 0))
+    buffer = io.BytesIO()
 
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), console=console) as progress:
-            task = progress.add_task("[green]Fetching Engine...", total=total_size)
-            for chunk in response.iter_content(chunk_size=1024 * 8):
-                buffer.write(chunk)
-                progress.update(task, advance=len(chunk))
-        
-        buffer.seek(0)
+    with Progress(SpinnerColumn(), TextColumn("[green]Fetching Engine..."), BarColumn(), console=console) as progress:
+        task = progress.add_task("Downloading", total=total_size)
+        for chunk in response.iter_content(chunk_size=8192):
+            buffer.write(chunk)
+            progress.update(task, advance=len(chunk))
+    
+    buffer.seek(0)
+    with zipfile.ZipFile(buffer) as z:
+        for member in z.namelist():
+            filename = os.path.basename(member)
+            # Extracts specifically into your local .spci/bin folder
+            if filename == "ffplay.exe":
+                with open(FFPLAY_PATH, "wb") as f: f.write(z.read(member))
+            elif filename == "ffmpeg.exe":
+                with open(FFMPEG_PATH, "wb") as f: f.write(z.read(member))
+            elif filename == "ffprobe.exe":
+                with open(FFPROBE_PATH, "wb") as f: f.write(z.read(member))
+    return [FFPLAY_PATH] + flags
 
-        with console.status("[bold green]Extracting Player, Worker, and Analyzer...[/bold green]"):
-            with zipfile.ZipFile(buffer) as z:
-                for file in z.namelist():
-                    if file.endswith("bin/ffplay.exe"):
-                        with open(FFPLAY_PATH, "wb") as f: f.write(z.read(file))
-                    elif file.endswith("bin/ffmpeg.exe"):
-                        with open(FFMPEG_PATH, "wb") as f: f.write(z.read(file))
-                    elif file.endswith("bin/ffprobe.exe"):
-                        with open(FFPROBE_PATH, "wb") as f: f.write(z.read(file))
-        
-        console.print("[bold green]Installation Complete![/bold green]")
-        return [FFPLAY_PATH] + flags
-    except Exception as e:
-        console.print(f"[bold red]Critical Setup Failure:[/bold red] {e}")
-        sys.exit(1)
+
 
 def log_history(name, video_id):
     with open(HISTORY_FILE, "a") as f:
@@ -257,42 +269,46 @@ def log_history(name, video_id):
 def setup():
     subprocess.run(["pip", "install", "-e", "."], check=True) 
 
-@app.command(short_help="Save a song for offline playback using VideoID")
+@app.command(short_help="Add a song to your offline favorites")
 def add_fav(video_id: str):
-    """Downloads audio bit-by-bit and registers it in the NoSQL database."""
-    # Ensure worker (ffmpeg) exists
+    """Downloads and aggressively compresses audio to save space."""
+    # 1. Verify Audio Engine is present
     get_player_command() 
-
+    
     local_path = os.path.join(FAV_DIR, f"{video_id}.mp3")
     url = f"https://www.youtube.com/watch?v={video_id}"
 
+    # 2. Updated Options: Added 'ffmpeg_location' and fixed 'preferredquality'
     ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': local_path.replace('.mp3', ''),
-        'ffmpeg_location': BIN_DIR, # CRITICAL: Points to your app's local binaries
+        'format': 'bestaudio/best', 
+        'outtmpl': os.path.join(FAV_DIR, video_id), # Extension added by postprocessor
+        'ffmpeg_location': BIN_DIR, # CRITICAL: Tells yt-dlp to use your .spci/bin/ffmpeg.exe
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '192',
+            'preferredquality': '64', # Extreme compression
         }],
         'quiet': True,
         'noplaylist': True,
     }
 
-    with console.status(f"[bold green]Buffering '{video_id}' to offline storage...[/bold green]"):
+    with console.status(f"[bold green]Buffering & Compressing '{video_id}'...[/bold green]"):
         try:
-            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-                if info.get('duration', 0) > 360:
-                    return console.print("[bold red]Error:[/bold red] This video is too long to be a standard song.")
-                # NoSQL Update
-                fav_table.upsert({
-                    'video_id': video_id,
-                    'title': info.get('title'),
-                    'artist': info.get('uploader'),
-                    'path': local_path
-                }, Query().video_id == video_id)
-            console.print(f"\n[bold green]Success![/bold green] '{info.get('title')}' is now stored offline.")
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # Force download and conversion
+                info = ydl.extract_info(url, download=True)
+                
+                # Double-check file existence before DB entry
+                if os.path.exists(local_path):
+                    fav_table.upsert({
+                        'video_id': video_id,
+                        'title': info.get('title'),
+                        'artist': info.get('uploader'),
+                        'path': local_path
+                    }, Query().video_id == video_id)
+                    console.print(f"[bold green]Success![/bold green] '{info.get('title')}' is now stored offline.")
+                else:
+                    console.print("[bold red]Error:[/bold red] File was downloaded but conversion failed.")
         except Exception as e:
             console.print(f"[bold red]Download Error:[/bold red] {e}")
 
@@ -374,68 +390,68 @@ def search(query: str):
         console.print(table, justify="center")
     else:
         console.print("[bold red]No results found.[/bold red]")
+        
+        
+        
 
 @app.command(short_help="Play a song (Checks offline first)")
 def play(query: str):
-    """Modified logic to handle true offline playback."""
-    
-    # 1. IMMEDIATE LOCAL CHECK (By Title or Video ID)
-    # We check if the query matches a title or ID already in our NoSQL DB
+    """Handles playback with history logging and a robust offline check."""
     Song = Query()
     offline_entry = fav_table.get((Song.video_id == query) | (Song.title == query))
 
-    if offline_entry and os.path.exists(offline_entry['path']):
-        # If found locally, PLAY IMMEDIATELY - No internet needed
-        title, artist, audio_source = offline_entry['title'], offline_entry['artist'], offline_entry['path']
-        is_offline = True
-    else:
-        # 2. ONLINE FALLBACK
-        # Only search online if we didn't find it in our favorites
+    audio_source = None
+    is_offline = False
+    title, artist, vid = "Unknown", "Unknown", query
+
+    if offline_entry:
+        # Robust check: Try original path and common media extensions
+        base_path = os.path.splitext(offline_entry['path'])[0]
+        for ext in ['.mp3', '.m4a', '.webm', '.opus']:
+            test_path = base_path + ext
+            if os.path.exists(test_path):
+                audio_source = test_path
+                title, artist, vid = offline_entry['title'], offline_entry['artist'], offline_entry['video_id']
+                is_offline = True
+                break
+
+    if not is_offline:
         try:
             with console.status(f"[bold green]Searching online for '{query}'...[/bold green]"):
                 results = get_music(query)
-                if not results:
-                    console.print("[bold red]Song not found offline or online.[/bold red]")
-                    console.print("[dim]Tip: Run 'spci setup-help' for authentication setup [/dim]")
-                    return
+                if not results: return console.print("[red]Not found.[/red]")
                 
                 song = results[0]
                 vid, title, artist = song['videoId'], song['title'], song['artists']
                 
-                # Check again if this specific ID from search results is offline
+                # Check online result against DB again
                 second_check = fav_table.get(Song.video_id == vid)
                 if second_check and os.path.exists(second_check['path']):
-                    audio_source = second_check['path']
-                    is_offline = True
+                    audio_source, is_offline = second_check['path'], True
                 else:
-                    # Final fallback: Get streaming URL (Requires Internet)
-                    ydl_opts = {'format': 'bestaudio/best', 'quiet': True}
+                    # Stream low-bitrate (64kbps) to save bandwidth
+                    ydl_opts = {'format': 'bestaudio[abr<=64]/bestaudio/best', 'quiet': True}
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
                         audio_source = info.get('url')
                     is_offline = False
-        except Exception as e:
-            console.print(f"[bold red]Error:[/bold red] {e}")
-            console.print("[dim]Song not in favorites. Check your internet connection or authentication setup.[/dim]")
-            console.print("[dim]Run 'spci setup-help' for global setup [/dim]")
-            return
-        
+        except Exception:
+            return console.print("[bold red]Offline Error:[/bold red] Song not in favorites and no internet.")
+
+    # HISTORY LOGGING FIXED
     log_history(title, vid)
 
     # UI EXECUTION
     layout = make_layout()
-    layout["header"].update(get_header())
-    layout["right"].update(get_stats_panel())
-    layout["footer"].update(get_controls_panel())
-
     try:
         with Live(layout, refresh_per_second=20, screen=True):
-            cmd = get_player_command() + [audio_source]
-            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
+            process = subprocess.Popen(get_player_command() + [audio_source], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             t = 0.0
             while process.poll() is None:
+                layout["header"].update(get_header())
                 layout["left"].update(get_now_playing_panel(title, artist, is_offline, t))
+                layout["right"].update(get_stats_panel())
+                layout["footer"].update(get_controls_panel())
                 t += 0.12
                 time.sleep(0.05)
     except KeyboardInterrupt:
