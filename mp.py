@@ -198,34 +198,27 @@ def auto_install_dependencies(system):
         console.print(f"[bold red]Installation failed:[/bold red] {e}")
 
 def get_player_command():
-    """Checks for binaries and auto-installs them on Linux/macOS if missing."""
+    """Checks for binaries. Uses local Trinity on Windows, system mpv on Linux/Mac."""
     system = platform.system()
-    ffplay_flags = ["-nodisp", "-autoexit", "-loglevel", "quiet", "-infbuf"] 
-
+    
     if system == "Windows":
+        ffplay_flags = ["-nodisp", "-autoexit", "-loglevel", "quiet", "-infbuf"] 
         if all(os.path.exists(p) for p in [FFPLAY_PATH, FFMPEG_PATH, FFPROBE_PATH]):
             return [FFPLAY_PATH] + ffplay_flags
         return download_trinity_windows(ffplay_flags)
     
-    elif system in ["Linux", "Darwin"]:
-        ffplay_path = shutil.which("ffplay")
-        mpv_path = shutil.which("mpv")
-        
-        if ffplay_path:
-            return [ffplay_path] + ffplay_flags
-        if mpv_path:
-            return [mpv_path, "--no-video"]
+    # LINUX/MAC: Look for mpv first as it's the most stable
+    mpv_path = shutil.which("mpv")
+    if mpv_path:
+        return [mpv_path, "--no-video", "--gapless-audio=yes"]
+    
+    # Fallback to ffplay only if mpv is missing
+    ffplay_path = shutil.which("ffplay")
+    if ffplay_path:
+        return [ffplay_path, "-nodisp", "-autoexit", "-loglevel", "quiet"]
 
-        # If both are missing, attempt auto-download/install
-        auto_install_dependencies(system)
-        
-        # Re-check after installation attempt
-        new_path = shutil.which("ffplay") or shutil.which("mpv")
-        if new_path:
-            return [new_path] + (ffplay_flags if "ffplay" in new_path else ["--no-video"])
-            
-        console.print("[bold red]Error:[/bold red] Auto-install failed. Please install ffmpeg manually.")
-        sys.exit(1)
+    console.print("[bold red]Error: No player found.[/bold red] Please run: sudo apt install mpv")
+    sys.exit(1)
 
 
 def download_trinity_windows(flags):
@@ -269,46 +262,44 @@ def log_history(name, video_id):
 def setup():
     subprocess.run(["pip", "install", "-e", "."], check=True) 
 
-@app.command(short_help="Add a song to your offline favorites")
+@app.command(short_help="Add song to storage (Raw format for mpv)")
 def add_fav(video_id: str):
-    """Downloads and aggressively compresses audio to save space."""
-    # 1. Verify Audio Engine is present
-    get_player_command() 
-    
-    local_path = os.path.join(FAV_DIR, f"{video_id}.mp3")
+    """Downloads raw audio without needing ffmpeg conversion on Linux/Mac."""
+    system = platform.system()
     url = f"https://www.youtube.com/watch?v={video_id}"
+    
+    # On Windows, we still use our local ffmpeg to make .mp3s
+    # On Linux/Mac, we download the raw file to avoid ffmpeg dependencies
+    if system == "Windows":
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': os.path.join(FAV_DIR, video_id),
+            'ffmpeg_location': BIN_DIR,
+            'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '64'}],
+        }
+    else:
+        # NO POST-PROCESSING: Just get the raw audio file (usually .webm or .m4a)
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': os.path.join(FAV_DIR, f"{video_id}.%(ext)s"),
+            'quiet': True,
+        }
 
-    # 2. Updated Options: Added 'ffmpeg_location' and fixed 'preferredquality'
-    ydl_opts = {
-        'format': 'bestaudio/best', 
-        'outtmpl': os.path.join(FAV_DIR, video_id), # Extension added by postprocessor
-        'ffmpeg_location': BIN_DIR, # CRITICAL: Tells yt-dlp to use your .spci/bin/ffmpeg.exe
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '64', # Extreme compression
-        }],
-        'quiet': True,
-        'noplaylist': True,
-    }
-
-    with console.status(f"[bold green]Buffering & Compressing '{video_id}'...[/bold green]"):
+    with console.status(f"[bold green]Downloading '{video_id}'...[/bold green]"):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # Force download and conversion
                 info = ydl.extract_info(url, download=True)
-                
-                # Double-check file existence before DB entry
-                if os.path.exists(local_path):
-                    fav_table.upsert({
-                        'video_id': video_id,
-                        'title': info.get('title'),
-                        'artist': info.get('uploader'),
-                        'path': local_path
-                    }, Query().video_id == video_id)
-                    console.print(f"[bold green]Success![/bold green] '{info.get('title')}' is now stored offline.")
-                else:
-                    console.print("[bold red]Error:[/bold red] File was downloaded but conversion failed.")
+                # Find exactly what file was saved
+                ext = info.get('ext', 'mp3') if system == "Windows" else info['ext']
+                final_path = os.path.join(FAV_DIR, f"{video_id}.{ext}")
+
+                fav_table.upsert({
+                    'video_id': video_id,
+                    'title': info.get('title'),
+                    'artist': info.get('uploader'),
+                    'path': final_path
+                }, Query().video_id == video_id)
+            console.print(f"[bold green]Success![/bold green] Saved as {info['ext']} for mpv playback.")
         except Exception as e:
             console.print(f"[bold red]Download Error:[/bold red] {e}")
 
@@ -394,26 +385,28 @@ def search(query: str):
         
         
 
-@app.command(short_help="Play a song (Checks offline first)")
+@app.command(short_help="Play a song (mpv optimized)")
 def play(query: str):
-    """Handles playback with history logging and a robust offline check."""
+    """Checks for any saved audio format and plays using the best available engine."""
     Song = Query()
     offline_entry = fav_table.get((Song.video_id == query) | (Song.title == query))
 
     audio_source = None
     is_offline = False
-    title, artist, vid = "Unknown", "Unknown", query
 
     if offline_entry:
-        # Robust check: Try original path and common media extensions
-        base_path = os.path.splitext(offline_entry['path'])[0]
-        for ext in ['.mp3', '.m4a', '.webm', '.opus']:
-            test_path = base_path + ext
-            if os.path.exists(test_path):
-                audio_source = test_path
-                title, artist, vid = offline_entry['title'], offline_entry['artist'], offline_entry['video_id']
-                is_offline = True
-                break
+        # Check the exact path stored, but also check for variations
+        if os.path.exists(offline_entry['path']):
+            audio_source = offline_entry['path']
+            is_offline = True
+        else:
+            # Check if the file exists with a different extension (safety)
+            base = os.path.join(FAV_DIR, offline_entry['video_id'])
+            for ext in ['.webm', '.m4a', '.mp3', '.opus']:
+                if os.path.exists(base + ext):
+                    audio_source = base + ext
+                    is_offline = True
+                    break
 
     if not is_offline:
         try:
@@ -437,6 +430,11 @@ def play(query: str):
                     is_offline = False
         except Exception:
             return console.print("[bold red]Offline Error:[/bold red] Song not in favorites and no internet.")
+        
+        
+    if not audio_source:
+       
+        pass
 
     # HISTORY LOGGING FIXED
     log_history(title, vid)
@@ -444,8 +442,9 @@ def play(query: str):
     # UI EXECUTION
     layout = make_layout()
     try:
-        with Live(layout, refresh_per_second=20, screen=True):
-            process = subprocess.Popen(get_player_command() + [audio_source], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+      with Live(layout, refresh_per_second=20, screen=True):
+            cmd = get_player_command() + [audio_source]
+            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             t = 0.0
             while process.poll() is None:
                 layout["header"].update(get_header())
