@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: spci-sonic-pulse
-Version: 2.0.5
-Summary: A CLI music player and downloader
+Version: 2.0.6
+Summary: A CLI music player
 License: MIT
 Classifier: Programming Language :: Python :: 3
 Classifier: License :: OSI Approved :: MIT License
@@ -19,11 +19,11 @@ Dynamic: license-file
 
 # SPCI - Sonic Pulse CLI Music Player
 
-A powerful and lightweight command-line music player that lets you search, play, and manage your favorite music directly from your terminal using YouTube and YouTube Music.
+A powerful and lightweight command-line music player that lets you search, play, and manage your favorite music directly from your terminal.
 
 ## Features
 
-- **Search:** Find music online from YouTube.
+- **Search:** Find music online.
 - **Play:** Play songs instantly (checks offline favorites first).
 - **Favorites:** Save songs locally for offline access.
 - **History:** Keep track of your recently played tracks.

@@ -1,10 +1,10 @@
 # SPCI - Sonic Pulse CLI Music Player
 
-A powerful and lightweight command-line music player that lets you search, play, and manage your favorite music directly from your terminal using YouTube and YouTube Music.
+A powerful and lightweight command-line music player that lets you search, play, and manage your favorite music directly from your terminal.
 
 ## Features
 
-- **Search:** Find music online from YouTube.
+- **Search:** Find music online.
 - **Play:** Play songs instantly (checks offline favorites first).
 - **Favorites:** Save songs locally for offline access.
 - **History:** Keep track of your recently played tracks.

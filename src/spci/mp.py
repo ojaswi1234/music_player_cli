@@ -25,7 +25,7 @@ from rich import box
 from getmusic import get_music
 from tinydb import TinyDB, Query 
 
-__version__ = "2.0.5"
+__version__ = "2.0.6"
 
 console = Console()
 app = typer.Typer()

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spci-sonic-pulse"
-version = "2.0.5"
-description = "A CLI music player and downloader"
+version = "2.0.6"
+description = "A CLI music player"
 readme = "README.md"
 license = { text = "MIT" }
 classifiers = [

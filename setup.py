@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name='spci-sonic-pulse',
-    version='2.0.5',
+    version='2.0.6',
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     include_package_data=True,
