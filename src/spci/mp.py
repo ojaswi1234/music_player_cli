@@ -1,10 +1,10 @@
-import msvcrt
 import os
 import platform
 import subprocess
 import time
 import sys
 import shutil
+import select
 import typer
 import requests
 import yt_dlp
@@ -24,6 +24,25 @@ from rich import box
 # External project modules
 from .getmusic import get_music
 from tinydb import TinyDB, Query 
+
+def get_key():
+    """Cross-platform keyboard input."""
+    if platform.system() == "Windows":
+        import msvcrt
+        if msvcrt.kbhit():
+            return msvcrt.getch()
+    else:
+        import termios
+        import tty
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setcbreak(fd)
+            if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+                return sys.stdin.read(1).encode()
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return None
 
 __version__ = "2.0.6"
 
@@ -451,8 +470,8 @@ def play(query: str):
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 t = 0.0
                 while process.poll() is None:
-                    if msvcrt.kbhit():
-                        key = msvcrt.getch()
+                    key = get_key()
+                    if key:
                         # Allow 'r' or Ctrl+R (0x12) to toggle repeat
                         if key in [b'r', b'R', b'\x12']:
                             repeat = not repeat
