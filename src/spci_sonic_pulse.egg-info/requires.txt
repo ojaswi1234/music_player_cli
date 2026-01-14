@@ -1,0 +1,7 @@
+typer
+rich
+requests
+yt-dlp
+python-vlc
+ytmusicapi
+tinydb

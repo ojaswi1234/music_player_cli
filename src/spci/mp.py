@@ -1,3 +1,4 @@
+import msvcrt
 import os
 import platform
 import subprocess
@@ -10,6 +11,7 @@ import yt_dlp
 import zipfile
 import io
 import random
+import math
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
@@ -18,15 +20,12 @@ from rich.panel import Panel
 from rich.live import Live
 from rich.align import Align
 from rich import box
-import math
-import random
-from rich.panel import Panel
 
 # External project modules
 from getmusic import get_music
 from tinydb import TinyDB, Query 
 
-__version__ = "2.0.0"
+__version__ = "2.0.5"
 
 console = Console()
 app = typer.Typer()
@@ -146,9 +145,10 @@ def get_now_playing_panel(title, artist, is_offline=False, t=0.0):
 
 
 
-def get_controls_panel():
+def get_controls_panel(repeat_mode: bool = False):
+    status = "[bold green]ON[/bold green]" if repeat_mode else "[bold red]OFF[/bold red]"
     return Panel(
-        Align.center("[bold white]ACTIVE SESSION[/bold white]\n[dim]Press Ctrl+C to stop playback and return to terminal[/dim]"),
+        Align.center(f"[bold white]ACTIVE SESSION[/bold white] | REPEAT: {status}\n[dim]Press Ctrl+C to stop | Press Ctrl+R to toggle Repeat[/dim]"),
         title="Controls",
         border_style="blue"
     )
@@ -397,6 +397,7 @@ def play(query: str):
     vid = query
     audio_source = None
     is_offline = False
+   
 
     if offline_entry:
         # Check for the file (supports multiple extensions for mpv)
@@ -441,21 +442,32 @@ def play(query: str):
 
     # UI EXECUTION
     layout = make_layout()
+    repeat = False
     try:
         with Live(layout, refresh_per_second=20, screen=True):
             # Uses mpv or ffplay based on OS detection
-            process = subprocess.Popen(get_player_command() + [audio_source], 
+            while True:
+                process = subprocess.Popen(get_player_command() + [audio_source], 
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            t = 0.0
-            while process.poll() is None:
-                layout["header"].update(get_header())
-                layout["left"].update(get_now_playing_panel(title, artist, is_offline, t))
-                layout["right"].update(get_stats_panel())
-                layout["footer"].update(get_controls_panel())
-                t += 0.12
-                time.sleep(0.05)
+                t = 0.0
+                while process.poll() is None:
+                    if msvcrt.kbhit():
+                        key = msvcrt.getch()
+                        # Allow 'r' or Ctrl+R (0x12) to toggle repeat
+                        if key in [b'r', b'R', b'\x12']:
+                            repeat = not repeat
+                            
+                    layout["header"].update(get_header())
+                    layout["left"].update(get_now_playing_panel(title, artist, is_offline, t))
+                    layout["right"].update(get_stats_panel())
+                    layout["footer"].update(get_controls_panel(repeat))
+                    t += 0.12
+                    time.sleep(0.05)
+                if not repeat:
+                    break
     except KeyboardInterrupt:
-        process.terminate()
+        if 'process' in locals():
+            process.terminate()
 
 @app.command(short_help="Remove a song from your offline favorites")
 def delete_fav(video_id: str):

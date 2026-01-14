@@ -1,9 +1,0 @@
-getmusic.py
-mp.py
-setup.py
-spci.egg-info/PKG-INFO
-spci.egg-info/SOURCES.txt
-spci.egg-info/dependency_links.txt
-spci.egg-info/entry_points.txt
-spci.egg-info/requires.txt
-spci.egg-info/top_level.txt
