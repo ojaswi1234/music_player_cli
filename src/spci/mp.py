@@ -22,7 +22,7 @@ from rich.align import Align
 from rich import box
 
 # External project modules
-from getmusic import get_music
+from .getmusic import get_music
 from tinydb import TinyDB, Query 
 
 __version__ = "2.0.6"
