@@ -44,7 +44,7 @@ def get_key():
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     return None
 
-__version__ = "2.0.6"
+__version__ = "2.0.8"
 
 console = Console()
 app = typer.Typer()
