@@ -22,7 +22,7 @@ from rich.align import Align
 from rich import box
 
 # External project modules
-from .getmusic import get_music
+from getmusic import get_music
 from tinydb import TinyDB, Query 
 
 def get_key():
@@ -179,7 +179,7 @@ def get_stats_panel():
         content = f"[bold green]Offline Songs: {fav_count}[/bold green]\n\n"
         content += "[bold white]Recent Activity:[/bold white]\n"
         if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, "r") as f:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
                 lines = f.readlines()[-3:]
             content += "".join([f"[dim]» {line.split('|')[0].strip()[:20]}...[/dim]\n" for line in lines])
         else:
@@ -271,7 +271,7 @@ def download_trinity_windows(flags):
 
 
 def log_history(name, video_id):
-    with open(HISTORY_FILE, "a") as f:
+    with open(HISTORY_FILE, "a", encoding="utf-8") as f:
         f.write(f"{name} | {video_id}\n")
 
 # --- USER COMMANDS ---
@@ -345,17 +345,26 @@ def show_fav():
     
 @app.command(short_help="show help")
 def help():
-    table = Table(show_header=True, header_style="bold blue", box=box.ROUNDED)
-    table.add_column("Command", width=14, style="cyan")
-    table.add_column("Description", style="dim", width=50)
-    table.add_row("search", "Search for a song")
-    table.add_row("play", "Play a song")
-    table.add_row("add-fav", "Add a song to favorites for offline playback")
-    table.add_row("show-fav", "Show offline favorite songs")
-    table.add_row("delete-fav", "Delete a song from offline favorites")
-    table.add_row("show-history", "Show the play history")
-    table.add_row("clear-history", "Clear the play history")
-    table.add_row("setup", "setup the environment to global")
+    # Create the table with expand=True so it fills the terminal width elegantly
+    table = Table(show_header=True, header_style="bold blue", box=box.ROUNDED, expand=True)
+
+# Using 'ratio' allows columns to grow proportionally to terminal size
+# Here, the Command column gets 60% of the space, and Description gets 40%
+    table.add_column("Command", style="cyan", ratio=3) 
+    table.add_column("Description", style="dim", ratio=2)
+
+# I've removed the leading spaces from your strings as Rich handles padding automatically
+    table.add_row("spci search \"song name\"", "Search for a song")
+    table.add_row(
+    "spci play <VideoID> [bold yellow](offline)[/bold yellow]\n[dim]or[/dim]\n\"song name\" [bold yellow](online)[/bold yellow]", 
+    "Play a song from local storage or search and stream online."
+)
+    table.add_row("spci add-fav \"<VideoID>\"", "Add to favorites")
+    table.add_row("spci show-fav", "Show offline favorites")
+    table.add_row("spci delete-fav \"<VideoID>\"", "Remove from favorites")
+    table.add_row("spci show-history", "Show playback history")
+    table.add_row("spci clear-history", "Clear playback history")
+   
 
     console.print(
     Panel(
@@ -514,7 +523,7 @@ def delete_fav(video_id: str):
 @app.command()
 def show_history():
     if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE) as f:
+        with open(HISTORY_FILE, encoding="utf-8") as f:
             history_text = f.read()
         
         panel = Panel(
