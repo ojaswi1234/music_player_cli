@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: spci-sonic-pulse
-Version: 2.0.12
+Version: 2.1.1
 Summary: A CLI music player with YouTube streaming and offline support
 License: MIT
 Project-URL: Repository, https://github.com/ojaswi1234/music_player_cli.git
@@ -20,7 +20,6 @@ Requires-Dist: typer
 Requires-Dist: rich
 Requires-Dist: requests
 Requires-Dist: yt-dlp
-Requires-Dist: python-vlc
 Requires-Dist: ytmusicapi
 Requires-Dist: tinydb
 Dynamic: license-file

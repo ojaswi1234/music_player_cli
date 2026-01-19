@@ -24,15 +24,8 @@ from rich.text import Text
 import socket
 import json
 from rich.cells import cell_len
-#from unidecode import unidecode
-
-
-# Global cache to keep the Live UI loop running at max speed
-
-
-
 # External project modules
-from getmusic import get_music
+from .getmusic import get_music
 from tinydb import TinyDB, Query 
 
 def get_key():
