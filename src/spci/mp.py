@@ -47,7 +47,7 @@ def get_key():
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     return None
 
-__version__ = "2.1.0"
+__version__ = "2.1.2"
 
 console = Console()
 app = typer.Typer()
@@ -330,7 +330,9 @@ def get_player_command():
     if ffplay_path:
         return [ffplay_path, "-nodisp", "-autoexit", "-loglevel", "quiet"]
 
-    console.print("[bold red]Error: No player found.[/bold red] Please run: sudo apt install mpv")
+    console.print("[bold red]Error:[/bold red] Required audio engine (mpv or ffplay) not found. [bold green]Installing now...[/bold green]")
+    
+    auto_install_dependencies(system)
     sys.exit(1)
 
 
