@@ -20,6 +20,16 @@ from rich.panel import Panel
 from rich.live import Live
 from rich.align import Align
 from rich import box
+from rich.text import Text
+import socket
+import json
+from rich.cells import cell_len
+#from unidecode import unidecode
+
+
+# Global cache to keep the Live UI loop running at max speed
+
+
 
 # External project modules
 from getmusic import get_music
@@ -44,7 +54,7 @@ def get_key():
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     return None
 
-__version__ = "2.0.8"
+__version__ = "2.1.0"
 
 console = Console()
 app = typer.Typer()
@@ -57,7 +67,7 @@ APP_DIR = os.path.join(os.path.expanduser("~"), ".spci")
 BIN_DIR = os.path.join(APP_DIR, "bin")
 FAV_DIR = os.path.join(APP_DIR, "fav_audio") # Store actual .mp3 files here
 FAV_DB_PATH = os.path.join(APP_DIR, "favorites.json") # NoSQL Metadata
-
+IPC_SOCKET = os.path.join(APP_DIR, "mpvsocket")
 # Windows Binary Paths
 FFPLAY_PATH = os.path.join(BIN_DIR, "ffplay.exe")
 FFMPEG_PATH = os.path.join(BIN_DIR, "ffmpeg.exe")
@@ -71,18 +81,123 @@ os.makedirs(FAV_DIR, exist_ok=True)
 db = TinyDB(FAV_DB_PATH)
 fav_table = db.table('favorites')
 
-# --- UI COMPONENTS ---
+# --- UI COMPONENTS --
 
+
+def sanitize_text(text):
+    """
+    Smart Hinglish Engine: Converts Hindi to natural sounding English.
+    Follows modern Schwa-deletion rules (Tum hi ho, NOT Tuma hi ho).
+    """
+    if not text: return "Unknown"
+    text = str(text)
+    
+    # 1. Skip if no Hindi detected
+    if not any("\u0900" <= char <= "\u097f" for char in text):
+        return text
+
+    # 2. Character Maps
+    vowels = {'अ':'a', 'आ':'aa', 'इ':'i', 'ई':'ee', 'उ':'u', 'ऊ':'oo', 'ए':'e', 'ऐ':'ai', 'ओ':'o', 'औ':'au'}
+    consonants = {
+        'क':'k', 'ख':'kh', 'ग':'g', 'घ':'gh', 'ङ':'n', 'च':'ch', 'छ':'chh', 'ज':'j', 'झ':'jh', 'ञ':'n',
+        'ट':'t', 'ठ':'th', 'ड':'d', 'ढ':'dh', 'ण':'n', 'त':'t', 'थ':'th', 'द':'d', 'ध':'dh', 'न':'n',
+        'प':'p', 'फ':'ph', 'ब':'b', 'भ':'bh', 'म':'m', 'य':'y', 'र':'r', 'ल':'l', 'व':'v', 'श':'sh', 'ष':'sh', 'स':'s', 'ह':'h'
+    }
+    matras = {'ा':'a', 'ि':'i', 'ी':'ee', 'ु':'u', 'ू':'oo', 'े':'e', 'ै':'ai', 'ो':'o', 'ौ':'au', 'ं':'n', 'ः':'h', '्':''}
+
+    result = ""
+    words = text.split()
+    
+    for word in words:
+        rewritten_word = ""
+        for i, char in enumerate(word):
+            if char in vowels:
+                rewritten_word += vowels[char]
+            elif char in consonants:
+                # Look ahead to see if there is a matra or if it's the end of the word
+                next_char = word[i+1] if i+1 < len(word) else None
+                
+                rewritten_word += consonants[char]
+                
+                # SMART RULE: Only add 'a' if NOT at end of word and NOT followed by a matra
+                if next_char and next_char in consonants:
+                    rewritten_word += "a"
+            elif char in matras:
+                rewritten_word += matras[char]
+            else:
+                rewritten_word += char # Keep spaces/special chars
+        
+        result += rewritten_word + " "
+    
+    return result.strip().title()
+
+class MPVController:
+    """Handles IPC communication with mpv on Unix-based systems."""
+    def __init__(self, socket_path):
+        self.socket_path = socket_path
+
+    def _send_command(self, command):
+        if platform.system() == "Windows": return None
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.connect(self.socket_path)
+                msg = json.dumps({"command": command}) + "\n"
+                client.sendall(msg.encode())
+                response = client.recv(1024).decode()
+                return json.loads(response).get("data")
+        except:
+            return None
+
+    def get_pos(self): return self._send_command(["get_property", "time-pos"])
+    def get_duration(self): return self._send_command(["get_property", "duration"])
+
+class NarrativeEngine:
+    """Maps playback state to atmospheric phases and lore."""
+    PHASES = [
+        (0.15, "Intro", "Calm"),
+        (0.40, "Build", "Focused"),
+        (0.70, "Peak", "Intense"),
+        (0.90, "Release", "Resonant"),
+        (1.00, "Outro", "Ethereal")
+    ]
+    
+    LORE_LINES = {
+        "Intro": ["Signal acquired.", "Initial frequency sweep...", "Rhythm initializing."],
+        "Build": ["Energy climbing.", "Patterns converging.", "The sequence accelerates."],
+        "Peak": ["Rhythm locks in.", "Maximum resonance.", "The track commits."],
+        "Release": ["Vibrations settling.", "Echoes in the void.", "Momentum dissipating."],
+        "Outro": ["Fade to black.", "Harmonics drifting.", "Silence approaching."]
+    }
+
+    def __init__(self):
+        self.cached_duration = 0
+
+    def get_state(self, pos, duration):
+        if not duration or duration <= 0: duration = self.cached_duration or 1
+        self.cached_duration = duration
+        ratio = pos / duration
+        
+        phase_name, mood = "Outro", "Ethereal"
+        for threshold, name, md in self.PHASES:
+            if ratio <= threshold:
+                phase_name, mood = name, md
+                break
+        
+        lore_pool = self.LORE_LINES.get(phase_name, ["..."])
+        lore = lore_pool[int(pos // 6) % len(lore_pool)]
+        return phase_name, mood, lore
+    
+    
 def make_layout() -> Layout:
     """Creates a structured grid for the CLI interface."""
     layout = Layout(name="root")
     layout.split(
         Layout(name="header", size=3),
         Layout(name="main", ratio=1),
-        Layout(name="footer", size=7)
+        Layout(name="footer", size=5)
     )
     layout["main"].split_row(
-        Layout(name="left", ratio=2),
+        Layout(name="left", ratio=3),
         Layout(name="right", ratio=1),
     )
     return layout
@@ -93,76 +208,48 @@ def get_header():
         box=box.ROUNDED,
         style="white on black"
     )
+    
+def get_now_playing_panel(title, artist, is_offline, pos, duration):
+    # 1. Natural Transliteration
+    safe_title = sanitize_text(title)
+    safe_artist = sanitize_text(artist)
+    
+    # 2. Logic for Narrative Engine
+    engine = NarrativeEngine()
+    phase, mood, lore = engine.get_state(pos, duration)
+    
+    # 3. Visual Safety Truncation
+    if cell_len(safe_title) > 35: safe_title = safe_title[:32] + "..."
+    if cell_len(safe_artist) > 20: safe_artist = safe_artist[:17] + "..."
 
+    # 4. Progress Bar (Sleek Visuals)
+    bar_width = 25
+    ratio = (pos / duration) if duration > 0 else 0
+    filled = int(bar_width * ratio)
+    bar = f"[white]█[/white]" * filled + "[dim]░[/dim]" * (bar_width - filled)
+    
+    time_str = f"{int(pos//60):02}:{int(pos%60):02} / {int(duration//60):02}:{int(duration%60):02}"
+    
+    # 5. Build Grid
+    grid = Table.grid(padding=(0, 1))
+    grid.add_column(justify="right", width=12, style="bold white")
+    grid.add_column(justify="left", width=45) # Anchor column
 
-def get_now_playing_panel(title, artist, is_offline=False, t=0.0):
-    """
-    Elegant ribbon visualizer:
-    - Adapts to terminal size (console.size)
-    - Smooth sine backbone + per-column micro-noise
-    - Soft falloff with graded glyphs and color shift
-    """
-    # Terminal-aware sizing (keeps left panel compact)
-    term = console.size
-    viz_width = max(24, min(48, term.width // 3))
-    viz_height = max(8, min(16, term.height // 4))
+    grid.add_row("TRACK", f"[bold yellow]{safe_title}[/bold yellow]")
+    grid.add_row("ARTIST", f"[cyan]{safe_artist}[/cyan]")
+    grid.add_row("PHASE", f"[bold magenta]{phase}[/bold magenta] [dim]({mood})[/dim]")
+    grid.add_row("LORE", f"[italic green]“{lore}”[/italic green]")
+    grid.add_row("", "")
+    grid.add_row("[white]PROGRESS[/white]", f"{bar} [bold cyan]{time_str}[/bold cyan]")
 
-    cx = viz_width // 2
-    cy = viz_height // 2
-
-    # Glyph ramp from faint -> bold
-    glyphs = [" ", "·", "•", "●", "█"]
-    colors = ["dim", "red", "cyan", "indigo", "magenta", "green", "yellow", "orange", "bright_white"]
-
-    # Parameters that control elegance
-    base_freq = 0.9 + (viz_width / 80)        # spatial frequency
-    speed = 1                             # temporal speed
-    amplitude = (viz_height / 2.5)           # vertical swing
-    smoothness = 1.6                         # how soft the falloff is
-
-    # Build grid rows (top->bottom)
-    grid_rows = []
-    for y in range(viz_height):
-        row = []
-        for x in range(viz_width):
-            # backbone: smooth sine across x, offset by time and small noise
-            backbone = math.sin((x / viz_width) * base_freq * 2 * math.pi + t * speed)
-            micro = math.sin((x * 0.7 + y * 0.4) * 0.4 + t * 1.7) * 0.15
-            y_center = cy + (backbone + micro) * amplitude
-            
-            # distance from ribbon centerline for this column
-            dist = abs(y - y_center)
-
-            # normalized intensity (1 at center, decays to 0)
-            intensity = max(0.0, 1.0 - (dist / smoothness))
-            idx = int(intensity * (len(glyphs) - 1))
-
-            # subtle phase-based color shift across x
-            color_shift = int(((math.sin(t * 0.6 + x * 0.12) + 1) / 2) * (len(colors) - 1))
-            color_idx = min(len(colors) - 1, max(0, idx + color_shift - 1))
-
-            ch = glyphs[idx]
-            color = colors[color_idx]
-            # keep markup lean
-            row.append(f"[{color}]{ch}[/{color}]")
-        grid_rows.append("".join(row))
-
-    vis = "\n".join(grid_rows)
-    source_tag = (
-        "[bold red]● OFFLINE (LOCAL)[/bold red]" if is_offline
-    else "[bold green]● STREAMING (YOUTUBE)[/bold green]"
-)
-
-    content = f"""
-[bold white]TITLE :[/bold white] [yellow]{title}[/yellow]
-[bold white]ARTIST:[/bold white] [cyan]{artist}[/cyan]
-[bold white]STATUS:[/bold white] {source_tag}
-{vis}
-    """.rstrip()
-
-    return Panel(Align.center(content), title="[bold green]NOW PLAYING[/bold green]", border_style="green")
-
-
+    source = "[bold red]OFFLINE[/bold red]" if is_offline else "[bold green]STREAMING[/bold green]"
+    return Panel(
+        Align.center(grid, vertical="middle"),
+        title=f"[bold green]SONIC PULSE ENGINE[/bold green] [dim]|[/dim] {source}",
+        border_style="green",
+        box=box.DOUBLE,
+        expand=True
+    )
 
 def get_controls_panel(repeat_mode: bool = False):
     status = "[bold green]ON[/bold green]" if repeat_mode else "[bold red]OFF[/bold red]"
@@ -178,16 +265,30 @@ def get_stats_panel():
         fav_count = len(fav_table.all())
         content = f"[bold green]Offline Songs: {fav_count}[/bold green]\n\n"
         content += "[bold white]Recent Activity:[/bold white]\n"
+        
         if os.path.exists(HISTORY_FILE):
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:
                 lines = f.readlines()[-3:]
-            content += "".join([f"[dim]» {line.split('|')[0].strip()[:20]}...[/dim]\n" for line in lines])
+            
+            for line in lines:
+                # The data is already romanized, now we just handle length
+                raw_text = line.split('|')[0].strip()
+                text_obj = Text(f"» {raw_text}", style="dim")
+                # Truncate to a safe width for the sidebar
+                text_obj.truncate(22, overflow="ellipsis")
+                content += f"{text_obj}\n"
         else:
             content += "[dim]No recent plays.[/dim]"
-    except:
-        content = "[red]DB Access Error[/red]"
+    except Exception as e:
+        content = f"[red]History Error[/red]"
 
-    return Panel(content, title="SPCI Stats", border_style="green")
+    return Panel(
+        content, 
+        title="SPCI Stats", 
+        border_style="green",
+        box=box.ROUNDED,
+        safe_box=True
+    )
 
 # --- CORE BACKEND LOGIC ---
 def auto_install_dependencies(system):
@@ -271,8 +372,9 @@ def download_trinity_windows(flags):
 
 
 def log_history(name, video_id):
+    safe_name = sanitize_text(name)
     with open(HISTORY_FILE, "a", encoding="utf-8") as f:
-        f.write(f"{name} | {video_id}\n")
+        f.write(f"{safe_name} | {video_id}\n")
 
 # --- USER COMMANDS ---
 
@@ -393,19 +495,31 @@ def help():
 
 @app.command(short_help="Find music online")
 def search(query: str):
-    """Searches Online and displays results with their unique IDs."""
-    with console.status(f"[bold green]Searching music online '{query}'...[/bold green]"):
+    """Searches Online and displays results with Natural Hinglish transliteration."""
+    with console.status(f"[bold green]Searching for '{query}'...[/bold green]"):
         results = get_music(query)
    
     if results:
-        table = Table(title=f"YouTube Results for: {query}", box=box.MINIMAL_DOUBLE_HEAD)
-        table.add_column("ID", style="green")
-        table.add_column("Title", style="bold white")
-        table.add_column("Channel/Artist", style="cyan")
-        table.add_column("Length", justify="right")
+        table = Table(title=f"Results: {query}", box=box.SQUARE, expand=True)
+        table.add_column("ID", style="green", no_wrap=True, width=12)
+        table.add_column("Title", style="bold white", ratio=3)
+        table.add_column("Channel", style="cyan", ratio=1)
+        table.add_column("Time", justify="right", width=8)
         
         for song in results:
-            table.add_row(song['videoId'], song['title'], song['artists'], song['duration'])
+            # Use the Smart Hinglish Engine to sanitize titles and artists
+            safe_title = sanitize_text(song['title'])
+            safe_artist = sanitize_text(song['artists'])
+
+            # Visual truncation for table safety
+            t_text = Text(safe_title)
+            t_text.truncate(40, overflow="ellipsis")
+            
+            a_text = Text(safe_artist)
+            a_text.truncate(15, overflow="ellipsis")
+
+            table.add_row(song['videoId'], t_text, a_text, song['duration'])
+        
         console.print(table, justify="center")
     else:
         console.print("[bold red]No results found.[/bold red]")
@@ -425,6 +539,7 @@ def play(query: str):
     vid = query
     audio_source = None
     is_offline = False
+    duration = 0
    
 
     if offline_entry:
@@ -467,35 +582,46 @@ def play(query: str):
 
     # 3. LOG HISTORY (Variables are now guaranteed to exist)
     log_history(title, vid)
-
-    # UI EXECUTION
     layout = make_layout()
     repeat = False
+    controller = MPVController(IPC_SOCKET)
+    
+    console.print("[dim]Initializing audio engine...[/dim]")
+    player_cmd = get_player_command()  # This may download ffmpeg/ffplay
+    console.print("[bold green]Audio engine ready.[/bold green]\n")
+
+    layout = make_layout()
+    repeat = False
+    controller = MPVController(IPC_SOCKET)
+
+    console.clear()
     try:
-        with Live(layout, refresh_per_second=20, screen=True):
-            # Uses mpv or ffplay based on OS detection
+        with Live(layout, refresh_per_second=20, screen=True, transient=True):
             while True:
-                process = subprocess.Popen(get_player_command() + [audio_source], 
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                t = 0.0
+                process = subprocess.Popen(player_cmd + [audio_source],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                start_time = time.time()
                 while process.poll() is None:
                     key = get_key()
-                    if key:
-                        # Allow 'r' or Ctrl+R (0x12) to toggle repeat
-                        if key in [b'r', b'R', b'\x12']:
-                            repeat = not repeat
-                            
+                    if key in [b'r', b'R', b'\x12']:
+                        repeat = not repeat
+                    
+                    # State Polling: Simulation for Windows, IPC for macOS/Linux
+                    if platform.system() == "Windows":
+                        cur_pos = time.time() - start_time
+                        cur_dur = duration or 240 # Estimated fallback
+                    else:
+                        cur_pos = controller.get_pos() or (time.time() - start_time)
+                        cur_dur = controller.get_duration() or duration or 1
+
                     layout["header"].update(get_header())
-                    layout["left"].update(get_now_playing_panel(title, artist, is_offline, t))
+                    layout["left"].update(get_now_playing_panel(title, artist, is_offline, cur_pos, cur_dur))
                     layout["right"].update(get_stats_panel())
                     layout["footer"].update(get_controls_panel(repeat))
-                    t += 0.12
                     time.sleep(0.05)
-                if not repeat:
-                    break
+                if not repeat: break
     except KeyboardInterrupt:
-        if 'process' in locals():
-            process.terminate()
+        if 'process' in locals(): process.terminate()
 
 @app.command(short_help="Remove a song from your offline favorites")
 def delete_fav(video_id: str):

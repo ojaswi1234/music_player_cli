@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: spci-sonic-pulse
-Version: 2.0.9
+Version: 2.0.12
 Summary: A CLI music player with YouTube streaming and offline support
 License: MIT
 Project-URL: Repository, https://github.com/ojaswi1234/music_player_cli.git
@@ -39,16 +39,15 @@ A powerful and lightweight command-line music player that lets you search, play,
 
 ## Installation
 
+```bash
+pip install spci-sonic-pulse
+```
+
 ### Prerequisites
 
 - **Python 3.8+**
 - **FFmpeg:** Required for processing audio streams (Don't worry if not there in your computer, the tool will auto download it or any alternative).
 
-### Install via PyPI
-
-```bash
-pip install spci-sonic-pulse
-```
 
 ## Usage
 
@@ -67,8 +66,6 @@ spci show-fav
 # View play history
 spci show-history
 
-# Initial setup (if required)
-spci setup
 ```
 
 ## Commands

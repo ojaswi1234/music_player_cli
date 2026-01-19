@@ -39,8 +39,6 @@ spci show-fav
 # View play history
 spci show-history
 
-# Initial setup (if required)
-spci setup
 ```
 
 ## Commands

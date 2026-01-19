@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spci-sonic-pulse"
-version = "2.0.9"
+version = "2.1.0"
 description = "A CLI music player with YouTube streaming and offline support"
 readme = "README.md"
 license = { text = "MIT" }
@@ -24,7 +24,6 @@ dependencies = [
     "rich",
     "requests",
     "yt-dlp",
-    "python-vlc",
     "ytmusicapi",
     "tinydb",
 ]
