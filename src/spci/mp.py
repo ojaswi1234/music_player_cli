@@ -391,15 +391,22 @@ def add_fav(video_id: str):
             'format': 'bestaudio/best',
             'outtmpl': os.path.join(FAV_DIR, video_id),
             'ffmpeg_location': BIN_DIR,
-            'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '64'}],
+            'postprocessors': [{'key': 'FFmpegExtractAudio',
+                                'preferredcodec': 'mp3',
+                                'preferredquality': '64'}],
         }
     else:
         # NO POST-PROCESSING: Just get the raw audio file (usually .webm or .m4a)
         ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': os.path.join(FAV_DIR, f"{video_id}.%(ext)s"),
-            'quiet': True,
-        }
+        'format': 'bestaudio/best',
+        'outtmpl': os.path.join(FAV_DIR, video_id),
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '64', # This ensures the file size remains small
+        }],
+        'quiet': True,
+    }
 
     with console.status(f"[bold green]Downloading '{video_id}'...[/bold green]"):
         try:
@@ -563,11 +570,12 @@ def play(query: str):
                 
                 # Double check search result against DB
                 second_check = fav_table.get(Song.video_id == vid)
+                
                 if second_check and os.path.exists(second_check['path']):
                     audio_source, is_offline = second_check['path'], True
                 else:
                     # Stream 64kbps to save bandwidth
-                    ydl_opts = {'format': 'bestaudio[abr<=64]/bestaudio/best', 'quiet': True}
+                    ydl_opts = {'format': 'bestaudio/best', 'quiet': True}
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
                         audio_source = info.get('url')
