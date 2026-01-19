@@ -12,16 +12,15 @@ A powerful and lightweight command-line music player that lets you search, play,
 
 ## Installation
 
+```bash
+pip install spci-sonic-pulse
+```
+
 ### Prerequisites
 
 - **Python 3.8+**
 - **FFmpeg:** Required for processing audio streams (Don't worry if not there in your computer, the tool will auto download it or any alternative).
 
-### Install via PyPI
-
-```bash
-pip install spci-sonic-pulse
-```
 
 ## Usage
 
