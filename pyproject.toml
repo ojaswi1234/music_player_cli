@@ -1,24 +1,24 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "spci-sonic-pulse"
 version = "2.0.9"
-description = "A CLI music player"
+description = "A CLI music player with YouTube streaming and offline support"
 readme = "README.md"
 license = { text = "MIT" }
+requires-python = ">=3.8"
+keywords = ["music-player", "cli", "terminal", "youtube", "audio", "rich-ui", "sonic-pulse"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Multimedia :: Sound/Audio :: Players",
-    "Topic :: Multimedia :: Sound/Audio :: Analysis",
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
     "Development Status :: 5 - Production/Stable",
 ]
-keywords = ["music-player", "cli", "terminal", "youtube", "audio", "rich-ui", "sonic-pulse"]
 dependencies = [
     "typer",
     "rich",
@@ -29,12 +29,13 @@ dependencies = [
     "tinydb",
 ]
 
+[project.urls]
+Repository = "https://github.com/ojaswi1234/music_player_cli.git"
+Issues = "https://github.com/ojaswi1234/music_player_cli/issues"
+
+
 [project.scripts]
 spci = "spci.mp:app"
-
-[project.urls]
-Homepage = "https://github.com/ojaswi1234/music_player_cli"
-Issues = "https://github.com/ojaswi1234/music_player_cli/issues"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -42,5 +43,3 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-
