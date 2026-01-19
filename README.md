@@ -15,8 +15,7 @@ A powerful and lightweight command-line music player that lets you search, play,
 ### Prerequisites
 
 - **Python 3.8+**
-- **VLC Media Player:** Ensure VLC is installed on your system as it is used for audio playback.
-- **FFmpeg:** Required for processing audio streams.
+- **FFmpeg:** Required for processing audio streams (Don't worry if not there in your computer, the tool will auto download it or any alternative).
 
 ### Install via PyPI
 
