@@ -1,0 +1,14 @@
+LICENSE
+README.md
+pyproject.toml
+setup.cfg
+setup.py
+src/spci/__init__.py
+src/spci/getmusic.py
+src/spci/mp.py
+src/spci_sonic_pulse.egg-info/PKG-INFO
+src/spci_sonic_pulse.egg-info/SOURCES.txt
+src/spci_sonic_pulse.egg-info/dependency_links.txt
+src/spci_sonic_pulse.egg-info/entry_points.txt
+src/spci_sonic_pulse.egg-info/requires.txt
+src/spci_sonic_pulse.egg-info/top_level.txt
