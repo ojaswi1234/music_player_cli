@@ -24,9 +24,11 @@ from rich import box
 from rich.text import Text
 import socket
 import json
+import string
+from typing import List
 from rich.cells import cell_len
 # External project modules
-from .getmusic import get_music
+from getmusic import get_music
 from tinydb import TinyDB, Query 
 
 class MyLogger:
@@ -82,6 +84,7 @@ os.makedirs(FAV_DIR, exist_ok=True)
 # Initialize NoSQL Database
 db = TinyDB(FAV_DB_PATH)
 fav_table = db.table('favorites')
+playlist_table = db.table('playlists')
 
 # --- UI COMPONENTS --
 
@@ -152,6 +155,7 @@ class MPVController:
 
     def get_pos(self): return self._send_command(["get_property", "time-pos"])
     def get_duration(self): return self._send_command(["get_property", "duration"])
+    def toggle_pause(self): return self._send_command(["cycle", "pause"])
 
 class NarrativeEngine:
     """Maps playback state to atmospheric phases and lore."""
@@ -256,7 +260,7 @@ def get_now_playing_panel(title, artist, is_offline, pos, duration):
 def get_controls_panel(repeat_mode: bool = False):
     status = "[bold green]ON[/bold green]" if repeat_mode else "[bold red]OFF[/bold red]"
     return Panel(
-        Align.center(f"[bold white]ACTIVE SESSION[/bold white] | REPEAT: {status}\n[dim]Press Ctrl+C to stop | Press Ctrl+R to toggle Repeat[/dim]"),
+        Align.center(f"[bold white]ACTIVE SESSION[/bold white] | REPEAT: {status}\n[dim]Ctrl+C: Stop | Ctrl+R: Repeat | Ctrl+P: Pause | n: Next[/dim]"),
         title="Controls",
         border_style="blue"
     )
@@ -332,7 +336,7 @@ def get_player_command():
     # LINUX/MAC: Look for mpv first as it's the most stable
     mpv_path = shutil.which("mpv")
     if mpv_path:
-        return [mpv_path, "--no-video", "--gapless-audio=yes"]
+        return [mpv_path, "--no-video", "--gapless-audio=yes", f"--input-ipc-server={IPC_SOCKET}"]
     
     # Fallback to ffplay only if mpv is missing
     ffplay_path = shutil.which("ffplay")
@@ -508,6 +512,11 @@ def help():
     table.add_row("add-fav \"<VideoID>\"", "Add to favorites")
     table.add_row("show-fav", "Show offline favorites")
     table.add_row("delete-fav \"<VideoID>\"", "Remove from favorites")
+    table.add_row("add-pl <IDs...>", "Create a playlist")
+    table.add_row("del-pl <ID/Name>", "Delete a playlist")
+    table.add_row("play-pl <ID/Name>", "Play a playlist")
+    table.add_row("view-pl", "View all playlists")
+    table.add_row("find-pl <ID/Name>", "Find a playlist")
     table.add_row("show-history", "Show playback history")
     table.add_row("clear-history", "Clear playback history")
     table.add_row("quit / exit", "Exit the interactive shell")
@@ -559,36 +568,80 @@ def search(query: str):
             # Visual truncation for table safety
             t_text = Text(safe_title)
             t_text.truncate(40, overflow="ellipsis")
-            
+
             a_text = Text(safe_artist)
             a_text.truncate(15, overflow="ellipsis")
-
+            
             table.add_row(song['videoId'], t_text, a_text, song['duration'])
         
         console.print(table, justify="center")
     else:
         console.print("[bold red]No results found.[/bold red]")
-        
-        
-        
 
-@app.command(short_help="Play a song (Checks offline first)")
-def play(query: str):
-    """Handles playback with robust variable initialization to prevent crashes."""
+@app.command(name="add-pl", short_help="Add a new playlist")
+def add_pl(song_ids: List[str]):
+    """Creates a new playlist with the given song IDs."""
+    playlist_name = typer.prompt("Enter playlist name")
+    playlist_id = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+    playlist_table.insert({
+        "id": playlist_id,
+        "name": playlist_name,
+        "songs": song_ids
+    })
+    console.print(f"[bold green]Playlist '{playlist_name}' created with ID: {playlist_id}[/bold green]")
+
+@app.command(name="del-pl", short_help="Delete a playlist")
+def del_pl(identifier: str):
+    """Deletes a playlist by ID or Name."""
+    Playlist = Query()
+    removed = playlist_table.remove((Playlist.id == identifier) | (Playlist.name == identifier))
+    if removed:
+        console.print(f"[bold green]Playlist deleted.[/bold green]")
+    else:
+        console.print(f"[bold red]Playlist not found.[/bold red]")
+
+@app.command(name="view-pl", short_help="View all playlists")
+def view_pl():
+    """Lists all saved playlists."""
+    playlists = playlist_table.all()
+    if not playlists:
+        return console.print("[yellow]No playlists found.[/yellow]")
+    
+    table = Table(title="Your Playlists", box=box.ROUNDED)
+    table.add_column("ID", style="cyan")
+    table.add_column("Name", style="green")
+    table.add_column("Songs", style="magenta")
+    
+    for pl in playlists:
+        table.add_row(pl['id'], pl['name'], str(len(pl['songs'])))
+    
+    console.print(table)
+
+@app.command(name="find-pl", short_help="Find a playlist")
+def find_pl(identifier: str):
+    """Shows details of a specific playlist."""
+    Playlist = Query()
+    pl = playlist_table.get((Playlist.id == identifier) | (Playlist.name == identifier))
+    if pl:
+        console.print(f"[bold cyan]ID:[/bold cyan] {pl['id']}")
+        console.print(f"[bold green]Name:[/bold green] {pl['name']}")
+        console.print(f"[bold magenta]Songs:[/bold magenta] {', '.join(pl['songs'])}")
+    else:
+        console.print(f"[bold red]Playlist not found.[/bold red]")
+
+def resolve_audio(query: str):
+    """Resolves a query (ID or Title) to a playable audio source and metadata."""
     Song = Query()
     offline_entry = fav_table.get((Song.video_id == query) | (Song.title == query))
 
-    # 1. INITIALIZE VARIABLES (Prevents UnboundLocalError)
     title = "Unknown Title"
     artist = "Unknown Artist"
     vid = query
     audio_source = None
     is_offline = False
     duration = 0
-   
 
     if offline_entry:
-        # Check for the file (supports multiple extensions for mpv)
         base_path = os.path.splitext(offline_entry['path'])[0]
         for ext in ['.webm', '.m4a', '.mp3', '.opus']:
             test_path = base_path + ext
@@ -601,23 +654,19 @@ def play(query: str):
                 break
 
     if not is_offline:
-        # 2. ONLINE FALLBACK
         try:
             with console.status(f"[bold green]Searching online for '{query}'...[/bold green]"):
                 results = get_music(query)
                 if not results:
-                    return console.print("[bold red]Song not found offline or online.[/bold red]")
+                    return None
                 
                 song = results[0]
                 vid, title, artist = song['videoId'], song['title'], song['artists']
                 
-                # Double check search result against DB
                 second_check = fav_table.get(Song.video_id == vid)
-                
                 if second_check and os.path.exists(second_check['path']):
                     audio_source, is_offline = second_check['path'], True
                 else:
-                    # Stream 64kbps to save bandwidth
                     ydl_opts = {
                         'format': 'bestaudio/best', 
                         'quiet': True,
@@ -627,53 +676,95 @@ def play(query: str):
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
                         audio_source = info.get('url')
+                        duration = info.get('duration', 0)
                     is_offline = False
         except Exception:
-            return console.print("[bold red]Error:[/bold red] Check internet or favorites.")
+            return None
 
-    # 3. LOG HISTORY (Variables are now guaranteed to exist)
-    log_history(title, vid)
-    layout = make_layout()
-    repeat = False
-    controller = MPVController(IPC_SOCKET)
-    
-    console.print("[dim]Initializing audio engine...[/dim]")
-    player_cmd = get_player_command()  # This may download ffmpeg/ffplay
-    console.print("[bold green]Audio engine ready.[/bold green]\n")
+    return {
+        "audio_source": audio_source,
+        "title": title,
+        "artist": artist,
+        "vid": vid,
+        "is_offline": is_offline,
+        "duration": duration
+    }
 
+def playback_engine(queries: List[str], repeat_mode: bool = False):
+    """Handles the UI and process management for one or more songs."""
     layout = make_layout()
-    repeat = False
+    repeat = repeat_mode
     controller = MPVController(IPC_SOCKET)
+    player_cmd = get_player_command()
 
     try:
         with Live(layout, refresh_per_second=20, screen=True):
             while True:
-                process = subprocess.Popen(player_cmd + [audio_source],
-                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                start_time = time.time()
-                while process.poll() is None:
-                    key = get_key()
-                    if key in [b'r', b'R', b'\x12']:
-                        repeat = not repeat
+                for query in queries:
+                    song_info = resolve_audio(query)
+                    if not song_info:
+                        continue
                     
-                    # State Polling: Simulation for Windows, IPC for macOS/Linux
-                    if platform.system() == "Windows":
-                        cur_pos = time.time() - start_time
-                        cur_dur = duration or 240 # Estimated fallback
-                    else:
-                        cur_pos = controller.get_pos() or (time.time() - start_time)
-                        cur_dur = controller.get_duration() or duration or 1
+                    audio_source = song_info['audio_source']
+                    title = song_info['title']
+                    artist = song_info['artist']
+                    vid = song_info['vid']
+                    is_offline = song_info['is_offline']
+                    duration = song_info['duration']
 
-                    layout["header"].update(get_header())
-                    layout["left"].update(get_now_playing_panel(title, artist, is_offline, cur_pos, cur_dur))
-                    layout["right"].update(get_stats_panel())
-                    layout["footer"].update(get_controls_panel(repeat))
-                    time.sleep(0.05)
+                    log_history(title, vid)
+
+                    process = subprocess.Popen(player_cmd + [audio_source],
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    start_time = time.time()
+                    skip = False
+                    
+                    while process.poll() is None:
+                        key = get_key()
+                        if key in [b'r', b'R', b'\x12']:
+                            repeat = not repeat
+                        elif key == b'\x10': # Ctrl+P
+                            controller.toggle_pause()
+                        elif key == b'n': # Next
+                            process.terminate()
+                            skip = True
+                            break
+                        
+                        # State Polling
+                        if platform.system() == "Windows":
+                            cur_pos = time.time() - start_time
+                            cur_dur = duration or 240
+                        else:
+                            cur_pos = controller.get_pos() or (time.time() - start_time)
+                            cur_dur = controller.get_duration() or duration or 1
+
+                        layout["header"].update(get_header())
+                        layout["left"].update(get_now_playing_panel(title, artist, is_offline, cur_pos, cur_dur))
+                        layout["right"].update(get_stats_panel())
+                        layout["footer"].update(get_controls_panel(repeat))
+                        time.sleep(0.05)
+                    
+                    if skip: continue
                 if not repeat: break
     except KeyboardInterrupt:
         if 'process' in locals(): process.terminate()
         console.show_cursor()
         console.print("\n[yellow]Playback stopped.[/yellow]")
+
+@app.command(name="play-pl", short_help="Play a playlist")
+def play_pl(identifier: str):
+    """Plays all songs in a playlist."""
+    Playlist = Query()
+    pl = playlist_table.get((Playlist.id == identifier) | (Playlist.name == identifier))
+    if pl:
+        playback_engine(pl['songs'])
+    else:
+        console.print(f"[bold red]Playlist not found.[/bold red]")
+
+@app.command(short_help="Play a song (Checks offline first)")
+def play(query: str):
+    """Handles playback with robust variable initialization."""
+    playback_engine([query])
 
 @app.command(short_help="Remove a song from your offline favorites")
 def delete_fav(video_id: str):
