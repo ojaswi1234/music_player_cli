@@ -28,7 +28,7 @@ import string
 from typing import List
 from rich.cells import cell_len
 # External project modules
-from getmusic import get_music
+from .getmusic import get_music
 from tinydb import TinyDB, Query 
 
 class MyLogger:
