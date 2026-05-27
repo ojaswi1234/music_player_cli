@@ -1,6 +1,14 @@
 import yt_dlp
 import os
 
+class MyLogger:
+    def debug(self, msg):
+        pass
+    def warning(self, msg):
+        pass
+    def error(self, msg):
+        pass
+
 def get_music(query):
     """
     Searches YouTube and filters results to include only song-length videos.
@@ -14,6 +22,7 @@ def get_music(query):
         'no_warnings': True,
         'extract_flat': True,
         'nocheckcertificate': True,
+        'logger': MyLogger(),
     }
     
     # We add "audio" and "song" to the query for better results

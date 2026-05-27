@@ -29,6 +29,14 @@ from rich.cells import cell_len
 from .getmusic import get_music
 from tinydb import TinyDB, Query 
 
+class MyLogger:
+    def debug(self, msg):
+        pass
+    def warning(self, msg):
+        pass
+    def error(self, msg):
+        pass
+
 def get_key():
     """Cross-platform keyboard input."""
     if platform.system() == "Windows":
@@ -424,6 +432,8 @@ def add_fav(video_id: str):
             'postprocessors': [{'key': 'FFmpegExtractAudio',
                                 'preferredcodec': 'mp3',
                                 'preferredquality': '64'}],
+            'logger': MyLogger(),
+            'no_warnings': True,
         }
     else:
         # NO POST-PROCESSING: Just get the raw audio file (usually .webm or .m4a)
@@ -436,6 +446,8 @@ def add_fav(video_id: str):
             'preferredquality': '64', # This ensures the file size remains small
         }],
         'quiet': True,
+        'logger': MyLogger(),
+        'no_warnings': True,
     }
 
     with console.status(f"[bold green]Downloading '{video_id}'...[/bold green]"):
@@ -606,7 +618,12 @@ def play(query: str):
                     audio_source, is_offline = second_check['path'], True
                 else:
                     # Stream 64kbps to save bandwidth
-                    ydl_opts = {'format': 'bestaudio/best', 'quiet': True}
+                    ydl_opts = {
+                        'format': 'bestaudio/best', 
+                        'quiet': True,
+                        'logger': MyLogger(),
+                        'no_warnings': True,
+                    }
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
                         audio_source = info.get('url')
@@ -628,9 +645,8 @@ def play(query: str):
     repeat = False
     controller = MPVController(IPC_SOCKET)
 
-    console.clear()
     try:
-        with Live(layout, refresh_per_second=20, screen=True, transient=True):
+        with Live(layout, refresh_per_second=20, screen=True):
             while True:
                 process = subprocess.Popen(player_cmd + [audio_source],
                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -656,6 +672,8 @@ def play(query: str):
                 if not repeat: break
     except KeyboardInterrupt:
         if 'process' in locals(): process.terminate()
+        console.show_cursor()
+        console.print("\n[yellow]Playback stopped.[/yellow]")
 
 @app.command(short_help="Remove a song from your offline favorites")
 def delete_fav(video_id: str):
